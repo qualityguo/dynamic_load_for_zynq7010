@@ -1,0 +1,54 @@
+# =====================================================================
+# Vitis / Xilinx SDK / Eclipse 工作区 .gitignore
+# 仓库根目录: D:\RTOS_Study\ssbl
+# =====================================================================
+
+# ---------- Eclipse / Vitis 工作区元数据（机器相关，可重新生成）----------
+.metadata/
+RemoteSystemsTempFiles/
+.recommenders/
+.lock
+*.lock
+
+# ---------- Vivado / Vitis 临时与日志 ----------
+.Xil/
+*.log
+*.jou
+*.str
+*.pb
+*.wdb
+*.bak
+*.tmp
+
+# ---------- 构建输出目录 ----------
+Debug/
+Release/
+**/Debug/
+**/Release/
+
+# ---------- 编译中间产物 ----------
+*.o
+*.obj
+*.d
+*.a
+*.lib
+*.slo
+*.lo
+
+# ---------- 链接 / 烧录产物（如需版本管理请注释掉对应行）----------
+*.elf
+*.bin
+*.map
+*.lst
+*.dump
+*.mif
+
+# ---------- 平台导出目录（Vitis 每次构建会重新生成）----------
+**/export/
+
+# ---------- 其它 ----------
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
