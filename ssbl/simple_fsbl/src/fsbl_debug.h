@@ -1,3 +1,11 @@
+/*
+ * @Author: qualityguo 2479523152@qq.com
+ * @Date: 2026-06-17 18:05:05
+ * @LastEditors: qualityguo 2479523152@qq.com
+ * @LastEditTime: 2026-06-22 22:23:23
+ * @FilePath: \ssbl\ssbl\simple_fsbl\src\fsbl_debug.h
+ * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
+ */
 /******************************************************************************
 * Copyright (c) 2012 - 2020 Xilinx, Inc.  All rights reserved.
 * SPDX-License-Identifier: MIT
@@ -33,6 +41,9 @@ extern "C" {
 
 #define DEBUG_GENERAL	0x00000001    /* general debug  messages */
 #define DEBUG_INFO	0x00000002    /* More debug information */
+
+#define FSBL_DEBUG_INFO
+
 
 #if defined (FSBL_DEBUG_INFO)
 #define fsbl_dbg_current_types ((DEBUG_INFO) | (DEBUG_GENERAL))

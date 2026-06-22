@@ -33,3 +33,9 @@ catch {bsp regenerate}
 platform generate
 platform active {zynq7010}
 platform generate -domains 
+platform generate -domains standalone_domain 
+platform generate -domains standalone_domain 
+platform clean
+platform generate
+platform clean
+platform generate

@@ -61,6 +61,7 @@ Loop:
 	b Loop
 
 FsblHandoffExit:
+		cpsid	if				/* disable IRQ and FIQ before handoff */
 		mov	 lr, r0	/* move the destination address into link register */
 
 		mcr	 15,0,r0,cr7,cr5,0		/* Invalidate Instruction cache */

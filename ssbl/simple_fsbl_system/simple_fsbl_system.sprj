@@ -5,7 +5,7 @@
       <applications name="simple_fsbl" domainName="standalone_domain" domainPrettyName="standalone on ps7_cortexa9_0" appBuildConfig="Debug"/>
       <options xsi:type="sdsproject:Option" gensdcard="true" dmclkid="0"/>
     </configBuildOptions>
-    <lastBuildOptions xsi:type="systemproject:SystemOptions">
+    <lastBuildOptions xsi:type="systemproject:SystemOptions" generateSDCard="false">
       <applications name="simple_fsbl" domainName="standalone_domain" domainPrettyName="standalone on ps7_cortexa9_0" appBuildConfig="Debug"/>
       <options xsi:type="sdsproject:Option" gensdcard="true" dmclkid="0"/>
     </lastBuildOptions>
