@@ -111,7 +111,6 @@ u32 GetPartitionHeaderInfo(u32 ImageBaseAddress);
 u32 PartitionMove(u32 ImageBaseAddress, PartHeader *Header);
 u32 ValidatePartitionHeaderChecksum(struct HeaderArray *H);
 u32 GetPartitionHeaderStartAddr(u32 ImageAddress, u32 *Offset);
-u32 GetImageHeaderAndSignature(u32 ImageAddress, u32 *Offset);
 u32 GetFsblLength(u32 ImageAddress, u32 *FsblLength);
 u32 LoadPartitionsHeaderInfo(u32 PartHeaderOffset,  PartHeader *Header);
 u32 IsEmptyHeader(struct HeaderArray *H);

@@ -350,14 +350,12 @@ extern "C" {
 #define DDR_INIT_FAIL			0xA007 /**< DDR Init Fail */
 #define NO_DDR					0xA008 /**< DDR missing */
 #define SD_INIT_FAIL			0xA009 /**< SD Init fail */
-#define NAND_INIT_FAIL			0xA00A /**< Nand Init Fail */
 #define PARTITION_MOVE_FAIL		0xA00B /**< Partition move fail */
 #define AUTHENTICATION_FAIL		0xA00C /**< Authentication fail */
 #define INVALID_HEADER_FAIL		0xA00D /**< Invalid header fail */
 #define GET_HEADER_INFO_FAIL	0xA00E /**< Get header fail */
 #define INVALID_LOAD_ADDRESS_FAIL	0xA00F /**< Invalid load address fail */
 #define PARTITION_CHECKSUM_FAIL		0xA010 /**< Partition checksum fail */
-#define RSA_SUPPORT_NOT_ENABLED_FAIL	0xA011 /**< RSA not enabled fail */
 #define PS7_INIT_FAIL			0xA012 /**< ps7 Init Fail */
 #define PARTITION_LOAD_FAIL            0xA013 /**< Partition load fail*/
 /*
@@ -400,7 +398,6 @@ extern "C" {
  * Efuse Status Register
  */
 #define EFUSE_STATUS_REG			(0xF800D010)  /**< Efuse Status Register */
-#define EFUSE_STATUS_RSA_ENABLE_MASK (0x400)  /**< Status of RSA enable */
 
 /*
  * PS reset control register define
@@ -417,8 +414,6 @@ extern "C" {
  */
 #define JTAG_MODE			0x00000000 /**< JTAG Boot Mode */
 #define QSPI_MODE			0x00000001 /**< QSPI Boot Mode */
-#define NOR_FLASH_MODE		0x00000002 /**< NOR Boot Mode */
-#define NAND_FLASH_MODE		0x00000004 /**< NAND Boot Mode */
 #define SD_MODE				0x00000005 /**< SD Boot Mode */
 #define MMC_MODE			0x00000006 /**< MMC Boot Device */
 
@@ -508,25 +503,18 @@ extern "C" {
 
 void OutputStatus(u32 State);
 void FsblFallback(void);
+void ErrorLockdown(u32 State);
 
-int FsblSetNextPartition(int Num);
-void *(memcpy_rom)(void * s1, const void * s2, u32 n);
 char *strcpy_rom(char *Dest, const char *Src);
 
 void ClearFSBLIn(void);
-void MarkFSBLIn(void);
 void FsblHandoff(u32 FsblStartAddr);
-u32 GetResetReason(void);
 
 #ifdef FSBL_PERF
 void FsblGetGlobalTime (XTime * tCur);
 void FsblMeasurePerfTime (XTime tCur, XTime tEnd);
 #endif
-void GetSiliconVersion(void);
 void FsblHandoffExit(u32 FsblStartAddr);
-void FsblHandoffJtagExit();
-/************************** Variable Definitions *****************************/
-extern int SkipPartition;
 
 /***************** Macros (Inline Functions) Definitions *********************/
 

@@ -31,3 +31,5 @@ bsp write
 bsp reload
 catch {bsp regenerate}
 platform generate
+platform active {zynq7010}
+platform generate -domains 

@@ -40,8 +40,6 @@ u32 InitSD(const char *);
 u32 SDAccess( u32 SourceAddress,
 		u32 DestinationAddress,
 		u32 LengthWords);
-
-void ReleaseSD(void);
 #endif
 /************************** Variable Definitions *****************************/
 #ifdef __cplusplus

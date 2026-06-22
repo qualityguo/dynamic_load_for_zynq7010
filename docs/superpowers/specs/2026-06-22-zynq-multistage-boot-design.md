@@ -264,25 +264,109 @@ auto_boot = yes                 # yes=超时启动 no=永久 CLI（忽略 boot_d
 
 **设计原则**：**任何启动决策歧义都退回 CLI，而不是硬启动一个坏镜像**——只要 SSBL 还活着，串口总是一个逃生通道。
 
-### 5.4 SD 卡目录约定
+### 5.4 SD 卡目录约定（双分区，见 §5.5）
+
+SD 卡采用**双 FAT32 分区**隔离 BOOT.bin 与可写数据（隔离原理见 §5.5.3）：
 
 ```
-SD 卡根目录 (FAT32):
-├── BOOT.bin                    ← fsbl + ssbl（bootgen 打包）
-├── boot.cfg                    ← 启动配置
-├── boot.log                    ← 启动日志（环形 4KB）
-├── app_current.bin             ← 当前应用（含自定义 header）
-├── app_a.bin                   ← A 槽（备份/升级目标）
-├── app_b.bin                   ← B 槽（备份）
-├── pl_current.bit              ← 当前 PL 设计
-├── pl_a.bit
-├── pl_b.bit
-└── *.tmp                       ← 提交瞬间的临时文件（仅 YMODEM 提交时短暂存在）
+SD 卡 (MBR 分区表):
+┌─────────────────── P1: 8MB FAT32（BootROM 读，SSBL 不挂载）───────────────────┐
+│ BOOT.BIN                    ← fsbl + ssbl（bootgen 打包，烧录后只读）          │
+└──────────────────────────────────────────────────────────────────────────────┘
+┌─────────────────── P2: 剩余空间 FAT32（SSBL 挂载此分区）────────────────────────┐
+│ boot.cfg                    ← 启动配置（SSBL 读/cfg save 写）                   │
+│ app_current.bin             ← 当前应用（含自定义 header）                       │
+│ app_a.bin                   ← A 槽（备份/升级目标）                             │
+│ app_b.bin                   ← B 槽（备份）                                      │
+│ pl_current.bit              ← 当前 PL 设计                                      │
+│ pl_a.bit / pl_b.bit                                                             │
+│ *.tmp                       ← 提交瞬间的临时文件（仅 YMODEM 提交时短暂存在）    │
+│ (boot.log)                  ← 后期 reintroduce（见 §10.4），落 P2 不落 P1      │
+└──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-**注意**：升级时 YMODEM 接收的数据**不落 SD 卡临时区**，而是暂存在 DDR 高地址（`0x02000000`），校验+用户确认后才提交到 SD（走 `.tmp + rename` 原子写）。所以 SD 卡上正常情况下看不到 `.tmp` 文件，只有在"提交瞬间断电"的极端场景才会留下半写的 `.tmp`（下次启动 SSBL 可识别并清理）。
+**分区硬约束**：
+- **P1 必须是第一个分区 + 标记 bootable**：BootROM 只在**首个 FAT 分区**找 `BOOT.BIN`
+- **P1 仅放 BOOT.BIN，实质只读**：SSBL 不挂载 P1、不写 P1，避免波及 P1 的 FAT 表
+- **所有可变数据落 P2**：SSBL 的 `storage_media_open()` 只挂载 P2（`§11.1` storage 层负责解析分区表得到 P2 的 LBA 起始）
+
+**注意**：升级时 YMODEM 接收的数据**不落 SD 卡临时区**，而是暂存在 DDR 高地址（`0x02000000`），校验+用户确认后才提交到 P2（走 `.tmp + rename` 原子写）。所以 P2 上正常情况下看不到 `.tmp` 文件，只有在"提交瞬间断电"的极端场景才会留下半写的 `.tmp`（下次启动 SSBL 可识别并清理）。由于 P2 的 FAT 写与 P1 的 FAT 表物理隔离，即使 P2 FAT 写坏也**不会影响 BootROM 找到 P1 的 BOOT.BIN**——这是双分区的核心收益。
 
 文件名即 manifest——文件系统本身就是最好的镜像清单，无需额外的清单文件。后期切 QSPI 时目录结构保持不变，只是底层 `storage` 从 `sd_port` 换成 `qspi_port`（FileX + LevelX NOR）。
+
+---
+
+### 5.5 存储隔离原则（BOOT.bin 与可写数据分家）
+
+#### 5.5.1 问题：共享 FAT 表的变砖风险
+
+BOOT.bin 是 BootROM 启动的唯一入口，烧录后**原则上不应被任何运行时写入波及**。但在单分区 SD 卡上，BOOT.bin 与 `app/bit/cfg/log/tmp` 共享**同一张 FAT 表**：
+
+- YMODEM 升级时的 `app.bin.tmp → rename` 要改 FAT 目录项
+- `boot.cfg` 的 `cfg save` 也要改 FAT 目录项
+- 任何一次 FAT 写入中途断电，**整张 FAT 表可能写半截** → 下次 BootROM 沿簇链找不到 BOOT.bin 的完整链 → **变砖（只能 JTAG 救）**
+
+`§6.3`/`§10.4` 的 `.tmp + rename` 原子写只保护**单个文件内容**，**保护不了共享的 FAT 表本身**。这是当前设计最大的可靠性隐患。
+
+#### 5.5.2 统一原则：挂载范围不与 BOOT.bin 重叠
+
+> **隔离不靠"分区"这个形式，靠"SSBL 挂载的文件系统覆盖范围与 BOOT.bin 所在存储区不重叠"。**
+
+SSBL 的 `storage_media_open()`（`fx_media_open`）只挂载**数据区**，绝不覆盖 BOOT.bin 区。这样无论数据区怎么写（升级、rename、断电），都**物理上够不到** BOOT.bin。两种介质的实现机制不同，但本质同一：
+
+| 介质 | BOOT.bin 位置 | BootROM 读取方式 | 隔离机制 |
+|---|---|---|---|
+| **SD 卡** | 第 1 个 FAT 分区（P1） | BootROM 自带精简 FAT 驱动，按文件名 `BOOT.BIN` 在**首个 FAT 分区**沿簇链读 | **FAT 分区表**：P1 与 P2 各自独立 FAT 表，SSBL 只挂 P2 |
+| **QSPI NOR** | flash 偏移 0 起 | BootROM 从裸地址 offset 0 读 boot header（**不经过任何 FS**） | **地址 layout**：FS 起始扇区设在 BOOT.bin 区段之后，写不进低地址 |
+
+**关键认知**：
+- SD 启动时 BOOT.bin **必须**在一个 FAT 分区里（BootROM 硬性要求，无法让它"脱离 FS"）；隔离靠**让数据落在另一个 FAT 分区**
+- QSPI 启动时 BOOT.bin **天然脱离 FS**（BootROM 裸读）；隔离靠**让 FS 不覆盖低地址段**
+- 两种介质下，SSBL 上层（image_loader / boot_selector / cli）通过 `storage_ops_t` 抽象**零改动**——正是 `§11` 介质抽象层的设计价值
+
+#### 5.5.3 SD 卡双分区方案（当前阶段 A 采用）
+
+```
+SD 卡 (MBR 分区表):
+┌──────────────┬──────────────────────────────────────┐
+│ P1: 8MB FAT32│  仅 BOOT.BIN（烧录后实质只读）        │  ← BootROM 从首 FAT 分区读
+├──────────────┼──────────────────────────────────────┤
+│ P2: 剩余 FAT32│ app/bit/cfg/tmp（+ 后期 log）        │  ← SSBL 只挂载此分区
+└──────────────┴──────────────────────────────────────┘
+```
+
+- **P1 = 8MB FAT32**：只放 `BOOT.BIN`。8MB 对 fsbl.elf + ssbl.elf（< 1MB）绰绰有余，留余量给未来（RSA 签名、多 partition）。烧录即定，**SSBL 不挂载、不写**
+- **P2 = 剩余空间 FAT32**：`app_*.bin` / `pl_*.bit` / `boot.cfg` / `*.tmp`（+ 后期 `boot.log`）。SSBL 的 `fx_media_open` 只覆盖 P2
+- **P1 必须是第一个分区且标记 bootable**（BootROM 只认首个 FAT 分区）
+- **收益**：P2 的 FAT 写坏了**波及不到 P1 的 FAT 表**，BOOT.bin 簇链安全。变砖风险从"任何升级断电"降到"几乎只剩物理损坏"
+
+#### 5.5.4 QSPI 地址 layout 方案（阶段 C 采用）
+
+Flash 没有分区表，但有线性地址空间。FileX+LevelX 挂载 NOR 时用**起始扇区 + 扇区数**界定 FS 覆盖范围：
+
+```
+QSPI NOR (例 16MB):
+0x000000 ┌────────────────────────────┐
+         │ BOOT.bin (fsbl + ssbl)     │  BootROM 从 offset 0 裸读
+         │                            │  ← FS 永不覆盖此段
+0x0F0000 ├────────────────────────────┤  ← FS_START_SECTOR 边界
+         │ app / bit / cfg / tmp      │  fx_media_open 起始扇区设在此
+         │ (FileX + LevelX NOR FAT)   │  ← 所有升级 churn 限定在此段
+0xFFFFFF └────────────────────────────┘
+```
+
+- **BOOT.bin 区段**：从 offset 0 起，大小由 bootgen 产物决定（+对齐余量）。**SSBL 的 FS 起始扇区必须设在此区段之后**
+- **数据区段**：`fx_media_format` / `fx_media_open` 的起始扇区 = `FS_START_SECTOR`（编译期常量，依 BOOT.bin 区段大小对齐到扇区）。写再多也只在此段内
+- **隔离靠地址边界**：FS 的写操作被 LevelX 限制在 `[FS_START_SECTOR, END]`，物理上够不到 BOOT.bin 区段
+
+#### 5.5.5 隔离原则对存储抽象层的要求
+
+`storage_ops_t`（§11.1）的 `media_open` 实现里，必须确保挂载范围不含 BOOT.bin 区：
+
+- `sd_port.c`：`fx_media_open` 针对 P2（非首分区），通过分区表解析得到 P2 的 LBA 起始
+- `qspi_port.c`：`fx_media_open` 的起始扇区 = `FS_START_SECTOR`（避开 BOOT.bin）
+
+这是介质 port 层的职责，上层无感。
 
 ---
 
@@ -801,7 +885,9 @@ typedef enum {
 | 3 短闪 | FSBL handoff 后 DDR 校验失败 |
 | 持续快闪 | SSBL 异常（不应到达） |
 
-### 10.4 上次启动状态持久化（boot.log）
+### 10.4 上次启动状态持久化（boot.log）—— 当前阶段排除
+
+> **实现状态**：当前阶段**不实现 boot.log**（用户决策）。原因：boot.log 是每次启动都要写的、FAT 表上最频繁的写入项，是共享 FAT 表变砖风险的最大来源（§5.5.1）。在双分区隔离（§5.5.3）落地前，先排除该项以消除最危险的 FAT 写。**后期 reintroduce 时必须遵守下方约束。**
 
 SD 卡维护一个 `boot.log`（环形覆盖，避免写磨损），最多保留最近 8 次记录：
 
@@ -822,6 +908,7 @@ SD 卡维护一个 `boot.log`（环形覆盖，避免写磨损），最多保留
   - 这避免了"本次写时还不知道 app 会不会活"的逻辑悖论
 - **OCM 内容在软复位（写 SLCR RESET_CTRL）后丢失**：所以"上次状态"必须在 SSBL 下次启动的**极早期**读出并回填到 SD 的 boot.log（在跳转本次 app 之前），OCM 只承担"本次尝试"的活体标记。**硬复位（POR，断电）也丢 OCM**——这是可接受的：硬复位后无法追溯上次状态，等同首次启动。
 - **不引入硬件看门狗**：原设计的 TTC0 看门狗会让 boot_delay（3s）和"app 启动到喂狗"的时间窗冲突（app 自己要重建 MMU/cache/GIC/ThreadX，>5s 合理）。改为纯 OCM 标记 + 软复位检测，无超时压力。如后期需要"app 跑飞后自动复位"，再独立设计（基于 `RESET_REASON` 寄存器，与本机制解耦）。
+- **★ 后期 reintroduce 的硬约束（§5.5）**：boot.log 必须落在**数据区**——SD 阶段落 P2、QSPI 阶段落数据 flash 段，**绝不与 BOOT.bin 共享 FAT/共区**。否则每次启动的 FAT 写会重新引入 §5.5.1 的变砖风险。
 
 ---
 
@@ -860,14 +947,19 @@ extern const storage_ops_t *g_storage;
 
 ### 11.2 迁移路径（SD → QSPI）
 
-- **阶段 A（当前）**：SD 卡 + FileX FAT。`storage/sd_port.c` 复用 `fx_zynq_sdio_driver.c`
-- **阶段 B（过渡）**：BOOT.bin 在 QSPI（产品出厂固化），app/bit 在 SD 卡（便于升级）。storage 层不变
+三个阶段的 BOOT.bin 隔离机制都遵循 §5.5.2 的统一原则（挂载范围不与 BOOT.bin 重叠），只是实现形式随介质变化：
+
+- **阶段 A（当前）**：SD 卡 + FileX FAT。**双 FAT32 分区**（§5.5.3）：P1（8MB）仅放 BOOT.bin、P2 放数据。`storage/sd_port.c` 复用 `fx_zynq_sdio_driver.c`，`fx_media_open` **只挂载 P2**（解析 MBR 分区表得 P2 的 LBA 起始）。隔离靠 P1/P2 各自独立的 FAT 表。
+- **阶段 B（过渡）**：BOOT.bin 在 QSPI（产品出厂固化，BootROM 裸读 offset 0），app/bit 在 SD 卡 P2（便于升级）。storage 层挂 SD 的 P2，隔离天然成立（BOOT.bin 已不在 SD 上）。
 - **阶段 C（最终）**：全 QSPI。新增 `storage/qspi_port.c` 基于 FileX + LevelX NOR
   - 需要：`lx_nor_flash_initialize` 对接 `xqspips` 驱动
   - FileX I/O driver 翻译扇区操作到 `lx_nor_flash_*`
   - QSPI 走 I/O 模式（不是线性 XIP 模式）
   - `fx_media_format` 格式化 NOR 为 FAT
-  - **上层（image_loader/boot_selector/cli）：零改动**
+  - **★ 隔离（§5.5.4）**：`fx_media_open` 的**起始扇区 = `FS_START_SECTOR`**，必须设在 BOOT.bin 区段之后（编译期常量，依 BOOT.bin 大小对齐到扇区）。FS 写再多也只在此段内，物理上够不到 offset 0 的 BOOT.bin。
+  - **上层（image_loader/boot_selector/cli）：零改动**——介质 port 层 (`sd_port.c` / `qspi_port.c`) 各自处理"挂载范围避开 BOOT.bin"的细节，对上层透明。
+
+**跨阶段不变量**：无论哪个阶段，`g_storage->media_open()` 挂载的范围都**不含 BOOT.bin 区**。这是 storage port 层的契约。
 
 ---
 
@@ -934,11 +1026,11 @@ extern const storage_ops_t *g_storage;
 the_ROM_image:
 {
     [bootloader, destination_cpu = a9_0]   fsbl.elf
-    [destination_cpu = a9_0]               ssbl.bin
+    [destination_cpu = a9_0]               ssbl.elf
 }
 ```
 
-**注意**：第二个 partition 是 SSBL，**不带 bitstream**（PL 由 SSBL 动态配）。`ssbl.bin` 由 `ssbl.elf` 经 `objcopy -O binary` 得到。
+**注意**：第二个 partition 是 SSBL，**不带 bitstream**（PL 由 SSBL 动态配）。SSBL 直接以 `ssbl.elf` 形式交给 bootgen，bootgen 从 ELF 的 program headers 读取段信息、加载地址（与 `ssbl.ld` 的 `ORIGIN=0x100000` 一致）与入口地址，**无需先 `objcopy -O binary` 转 `.bin`**——保留 ELF 元数据让 bootgen 自动决定 load/exec 地址，避免 raw `.bin` 丢失段信息后还需手工指定偏移。
 
 ### 13.3 `scripts/pack_app.py`（核心骨架）
 

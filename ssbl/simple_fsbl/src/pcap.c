@@ -68,7 +68,6 @@
 /***************************** Include Files *********************************/
 
 #include "pcap.h"
-#include "nand.h"		/* For NAND geometry information */
 #include "fsbl.h"
 #include "image_mover.h"	/* For MoveImage */
 #include "xparameters.h"
@@ -77,9 +76,6 @@
 #include "sleep.h"
 #include "xtime_l.h"
 
-#ifdef XPAR_XWDTPS_0_BASEADDR
-#include "xwdtps.h"
-#endif
 /************************** Constant Definitions *****************************/
 /*
  * The following constants map to the XPAR parameters created in the
@@ -100,10 +96,6 @@ extern int XDcfgPollDone(u32 MaskValue, u32 MaxCount);
 /* Devcfg driver instance */
 static XDcfg DcfgInstance;
 XDcfg *DcfgInstPtr;
-extern u32 Silicon_Version;
-#ifdef XPAR_XWDTPS_0_BASEADDR
-extern XWdtPs Watchdog;	/* Instance of WatchDog Timer	*/
-#endif
 
 /******************************************************************************/
 /**
@@ -151,13 +143,6 @@ u32 PcapDataTransfer(u32 *SourceDataPtr, u32 *DestinationDataPtr,
 		fsbl_printf(DEBUG_INFO,"PCAP_CLEAR_STATUS_FAIL \r\n");
 		return XST_FAILURE;
 	}
-
-#ifdef	XPAR_XWDTPS_0_BASEADDR
-	/*
-	 * Prevent WDT reset
-	 */
-	XWdtPs_RestartWdt(&Watchdog);
-#endif
 
 	/*
 	 * PCAP single DMA transfer setup
@@ -276,13 +261,6 @@ u32 PcapLoadPartition(u32 *SourceDataPtr, u32 *DestinationDataPtr,
 	}
 
 
-#ifdef	XPAR_XWDTPS_0_BASEADDR
-	/*
-	 * Prevent WDT reset
-	 */
-	XWdtPs_RestartWdt(&Watchdog);
-#endif
-
 	/*
 	 * PCAP single DMA transfer setup
 	 */
@@ -385,59 +363,29 @@ int InitPcap(void)
 
 	return XST_SUCCESS;
 }
-/******************************************************************************/
+
+/*****************************************************************************/
 /**
 *
-* This function programs the Fabric for use.
+* This function pulses PCFG_PROG_B high then low, then polls PCAP_INIT to go
+* low (reset) with a 30ms timeout. Returns whether PCAP_INIT reset in time.
 *
-* @param	None
+* @param	PcapReg is the cached DEVCFG CTRL register value
 *
 * @return
-*		- XST_SUCCESS if the Fabric  initialization is successful
-*		- XST_FAILURE if the Fabric  initialization fails
+*		- 1 if PCAP_INIT went low within the timeout
+*		- 0 if timed out (PCAP_INIT still set)
+*
 * @note		None
 *
 ****************************************************************************/
-u32 FabricInit(void)
+static u32 PulseProgBAndPollInit(u32 PcapReg)
 {
-	u32 PcapReg; 
-	u32 PcapCtrlRegVal;
-	u32 StatusReg;
-	u32 MctrlReg;
 	u32 PcfgInit;
-	u32 TimerExpired=0;
-	XTime tCur=0;
-	XTime tEnd=0;
-
-
-	/*
-	 * Set Level Shifters DT618760 - PS to PL enabling
-	 */
-	Xil_Out32(PS_LVL_SHFTR_EN, LVL_PS_PL);
-	fsbl_printf(DEBUG_INFO,"Level Shifter Value = 0x%lx \r\n",
-				Xil_In32(PS_LVL_SHFTR_EN));
-
-	/*
-	 * Get DEVCFG controller settings
-	 */
-	PcapReg = XDcfg_ReadReg(DcfgInstPtr->Config.BaseAddr,
-				XDCFG_CTRL_OFFSET);
-
-	/*
-	 * Check the PL power status
-	 */
-	if(Silicon_Version >= SILICON_VERSION_3)
-	{
-		MctrlReg = XDcfg_GetMiscControlRegister(DcfgInstPtr);
-
-		if((MctrlReg & XDCFG_MCTRL_PCAP_PCFG_POR_B_MASK) !=
-				XDCFG_MCTRL_PCAP_PCFG_POR_B_MASK)
-		{
-			fsbl_printf(DEBUG_INFO,"Fabric not powered up\r\n");
-			return XST_FAILURE;
-		}
-	}
-
+	u32 TimerExpired = 0;
+	XTime tCur = 0;
+	XTime tEnd = 0;
+	u32 PcapCtrlRegVal;
 
 	/*
 	 * Setting PCFG_PROG_B signal to high
@@ -446,16 +394,13 @@ u32 FabricInit(void)
 				(PcapReg | XDCFG_CTRL_PCFG_PROG_B_MASK));
 
 	/*
-	 * Check for AES source key
+	 * Check for AES source key, delay 5ms if set
 	 */
 	PcapCtrlRegVal = XDcfg_GetControlRegister(DcfgInstPtr);
 	if (PcapCtrlRegVal & XDCFG_CTRL_PCFG_AES_FUSE_MASK) {
-	/*
-	 * 5msec delay
-	 */
 		usleep(5000);
 	}
-	
+
 	/*
 	 * Setting PCFG_PROG_B signal to low
 	 */
@@ -463,19 +408,15 @@ u32 FabricInit(void)
 				(PcapReg & ~XDCFG_CTRL_PCFG_PROG_B_MASK));
 
 	/*
-	 * Check for AES source key
+	 * Check for AES source key, delay 5ms if set
 	 */
 	if (PcapCtrlRegVal & XDCFG_CTRL_PCFG_AES_FUSE_MASK) {
-	/*
-	 * 5msec delay
-	 */
 		usleep(5000);
 	}
 
 	/*
 	 * Polling the PCAP_INIT status for Reset or timeout
 	 */
-
 	XTime_GetTime(&tCur);
 	do
 	{
@@ -493,72 +434,62 @@ u32 FabricInit(void)
 
 	} while(!TimerExpired);
 
-	if(TimerExpired == 1)
+	return (TimerExpired == 0) ? 1 : 0;
+}
+/******************************************************************************/
+/**
+*
+* This function programs the Fabric for use.
+*
+* @param	None
+*
+* @return
+*		- XST_SUCCESS if the Fabric  initialization is successful
+*		- XST_FAILURE if the Fabric  initialization fails
+* @note		None
+*
+****************************************************************************/
+u32 FabricInit(void)
+{
+	u32 PcapReg;
+	u32 StatusReg;
+	u32 MctrlReg;
+
+	/*
+	 * Set Level Shifters DT618760 - PS to PL enabling
+	 */
+	Xil_Out32(PS_LVL_SHFTR_EN, LVL_PS_PL);
+	fsbl_printf(DEBUG_INFO,"Level Shifter Value = 0x%lx \r\n",
+				Xil_In32(PS_LVL_SHFTR_EN));
+
+	/*
+	 * Get DEVCFG controller settings
+	 */
+	PcapReg = XDcfg_ReadReg(DcfgInstPtr->Config.BaseAddr,
+				XDCFG_CTRL_OFFSET);
+
+	/*
+	 * Check the PL power status (silicon version 3.0+)
+	 */
+	MctrlReg = XDcfg_GetMiscControlRegister(DcfgInstPtr);
+
+	if((MctrlReg & XDCFG_MCTRL_PCAP_PCFG_POR_B_MASK) !=
+			XDCFG_MCTRL_PCAP_PCFG_POR_B_MASK)
 	{
-		TimerExpired = 0;
-		/*
-		 * Came here due to expiration and PCAP_INIT is set.
-		 * Retry PCFG_PROG_B High -> Low again
-		 */
+		fsbl_printf(DEBUG_INFO,"Fabric not powered up\r\n");
+		return XST_FAILURE;
+	}
 
+	/*
+	 * First attempt: pulse PROG_B and poll PCAP_INIT to reset
+	 */
+	if(!PulseProgBAndPollInit(PcapReg)) {
 		/*
-		 * Setting PCFG_PROG_B signal to high
+		 * Retry once: PCAP_INIT did not reset on the first pulse
 		 */
-		XDcfg_WriteReg(DcfgInstPtr->Config.BaseAddr, XDCFG_CTRL_OFFSET,
-					(PcapReg | XDCFG_CTRL_PCFG_PROG_B_MASK));
-
-		/*
-		 * Check for AES source key
-		 */
-		PcapCtrlRegVal = XDcfg_GetControlRegister(DcfgInstPtr);
-		if (PcapCtrlRegVal & XDCFG_CTRL_PCFG_AES_FUSE_MASK) {
+		if(!PulseProgBAndPollInit(PcapReg)) {
 			/*
-			 * 5msec delay
-			 */
-			usleep(5000);
-		}
-
-		/*
-		 * Setting PCFG_PROG_B signal to low
-		 */
-		XDcfg_WriteReg(DcfgInstPtr->Config.BaseAddr, XDCFG_CTRL_OFFSET,
-					(PcapReg & ~XDCFG_CTRL_PCFG_PROG_B_MASK));
-
-		/*
-		 * Check for AES source key
-		 */
-		if (PcapCtrlRegVal & XDCFG_CTRL_PCFG_AES_FUSE_MASK) {
-			/*
-			 * 5msec delay
-			 */
-			usleep(5000);
-		}
-		/*
-		 * Polling the PCAP_INIT status for Reset or timeout (second iteration)
-		 */
-
-		XTime_GetTime(&tCur);
-		do
-		{
-			PcfgInit = (XDcfg_GetStatusRegister(DcfgInstPtr) &
-					XDCFG_STATUS_PCFG_INIT_MASK);
-			if(PcfgInit == 0)
-			{
-				break;
-			}
-			XTime_GetTime(&tEnd);
-			if((u64)((u64)tCur + (COUNTS_PER_MILLI_SECOND*30)) > (u64)tEnd)
-			{
-				TimerExpired = 1;
-			}
-
-		} while(!TimerExpired);
-
-		if(TimerExpired == 1)
-		{
-			/*
-			 * Came here due to PCAP_INIT is not getting reset
-			 * for PCFG_PROG_B signal High -> Low
+			 * PCAP_INIT is not getting reset for PROG_B High -> Low
 			 */
 			fsbl_printf(DEBUG_INFO,"Fabric Init failed\r\n");
 			return XST_FAILURE;
@@ -688,54 +619,36 @@ u32 ClearPcapStatus(void)
 *
 ****************************************************************************/
 void PcapDumpRegisters (void) {
+	static const struct {
+		u32 Offset;
+		const char *Name;
+	} Regs[] = {
+		{ XDCFG_CTRL_OFFSET,			"CTRL" },
+		{ XDCFG_LOCK_OFFSET,			"LOCK" },
+		{ XDCFG_CFG_OFFSET,			"CONFIG" },
+		{ XDCFG_INT_STS_OFFSET,			"ISR" },
+		{ XDCFG_INT_MASK_OFFSET,		"IMR" },
+		{ XDCFG_STATUS_OFFSET,			"STATUS" },
+		{ XDCFG_DMA_SRC_ADDR_OFFSET,		"DMA SRC ADDR" },
+		{ XDCFG_DMA_DEST_ADDR_OFFSET,		"DMA DEST ADDR" },
+		{ XDCFG_DMA_SRC_LEN_OFFSET,		"DMA SRC LEN" },
+		{ XDCFG_DMA_DEST_LEN_OFFSET,		"DMA DEST LEN" },
+		{ XDCFG_ROM_SHADOW_OFFSET,		"ROM SHADOW CTRL" },
+		{ XDCFG_MULTIBOOT_ADDR_OFFSET,		"MBOOT" },
+		{ XDCFG_SW_ID_OFFSET,			"SW ID" },
+		{ XDCFG_UNLOCK_OFFSET,			"UNLOCK" },
+		{ XDCFG_MCTRL_OFFSET,			"MCTRL" },
+	};
+	u32 i;
 
-	fsbl_printf(DEBUG_INFO,"PCAP register dump:\r\n");
+	fsbl_printf(DEBUG_INFO, "PCAP register dump:\r\n");
 
-	fsbl_printf(DEBUG_INFO,"PCAP CTRL 0x%x: 0x%08lx\r\n",
-		XPS_DEV_CFG_APB_BASEADDR + XDCFG_CTRL_OFFSET,
-		Xil_In32(XPS_DEV_CFG_APB_BASEADDR + XDCFG_CTRL_OFFSET));
-	fsbl_printf(DEBUG_INFO,"PCAP LOCK 0x%x: 0x%08lx\r\n",
-		XPS_DEV_CFG_APB_BASEADDR + XDCFG_LOCK_OFFSET,
-		Xil_In32(XPS_DEV_CFG_APB_BASEADDR + XDCFG_LOCK_OFFSET));
-	fsbl_printf(DEBUG_INFO,"PCAP CONFIG 0x%x: 0x%08lx\r\n",
-		XPS_DEV_CFG_APB_BASEADDR + XDCFG_CFG_OFFSET,
-		Xil_In32(XPS_DEV_CFG_APB_BASEADDR + XDCFG_CFG_OFFSET));
-	fsbl_printf(DEBUG_INFO,"PCAP ISR 0x%x: 0x%08lx\r\n",
-		XPS_DEV_CFG_APB_BASEADDR + XDCFG_INT_STS_OFFSET,
-		Xil_In32(XPS_DEV_CFG_APB_BASEADDR + XDCFG_INT_STS_OFFSET));
-	fsbl_printf(DEBUG_INFO,"PCAP IMR 0x%x: 0x%08lx\r\n",
-		XPS_DEV_CFG_APB_BASEADDR + XDCFG_INT_MASK_OFFSET,
-		Xil_In32(XPS_DEV_CFG_APB_BASEADDR + XDCFG_INT_MASK_OFFSET));
-	fsbl_printf(DEBUG_INFO,"PCAP STATUS 0x%x: 0x%08lx\r\n",
-		XPS_DEV_CFG_APB_BASEADDR + XDCFG_STATUS_OFFSET,
-		Xil_In32(XPS_DEV_CFG_APB_BASEADDR + XDCFG_STATUS_OFFSET));
-	fsbl_printf(DEBUG_INFO,"PCAP DMA SRC ADDR 0x%x: 0x%08lx\r\n",
-		XPS_DEV_CFG_APB_BASEADDR + XDCFG_DMA_SRC_ADDR_OFFSET,
-		Xil_In32(XPS_DEV_CFG_APB_BASEADDR + XDCFG_DMA_SRC_ADDR_OFFSET));
-	fsbl_printf(DEBUG_INFO,"PCAP DMA DEST ADDR 0x%x: 0x%08lx\r\n",
-		XPS_DEV_CFG_APB_BASEADDR + XDCFG_DMA_DEST_ADDR_OFFSET,
-		Xil_In32(XPS_DEV_CFG_APB_BASEADDR + XDCFG_DMA_DEST_ADDR_OFFSET));
-	fsbl_printf(DEBUG_INFO,"PCAP DMA SRC LEN 0x%x: 0x%08lx\r\n",
-		XPS_DEV_CFG_APB_BASEADDR + XDCFG_DMA_SRC_LEN_OFFSET,
-		Xil_In32(XPS_DEV_CFG_APB_BASEADDR + XDCFG_DMA_SRC_LEN_OFFSET));
-	fsbl_printf(DEBUG_INFO,"PCAP DMA DEST LEN 0x%x: 0x%08lx\r\n",
-			XPS_DEV_CFG_APB_BASEADDR + XDCFG_DMA_DEST_LEN_OFFSET,
-			Xil_In32(XPS_DEV_CFG_APB_BASEADDR + XDCFG_DMA_DEST_LEN_OFFSET));
-	fsbl_printf(DEBUG_INFO,"PCAP ROM SHADOW CTRL 0x%x: 0x%08lx\r\n",
-		XPS_DEV_CFG_APB_BASEADDR + XDCFG_ROM_SHADOW_OFFSET,
-		Xil_In32(XPS_DEV_CFG_APB_BASEADDR + XDCFG_ROM_SHADOW_OFFSET));
-	fsbl_printf(DEBUG_INFO,"PCAP MBOOT 0x%x: 0x%08lx\r\n",
-		XPS_DEV_CFG_APB_BASEADDR + XDCFG_MULTIBOOT_ADDR_OFFSET,
-		Xil_In32(XPS_DEV_CFG_APB_BASEADDR + XDCFG_MULTIBOOT_ADDR_OFFSET));
-	fsbl_printf(DEBUG_INFO,"PCAP SW ID 0x%x: 0x%08lx\r\n",
-		XPS_DEV_CFG_APB_BASEADDR + XDCFG_SW_ID_OFFSET,
-		Xil_In32(XPS_DEV_CFG_APB_BASEADDR + XDCFG_SW_ID_OFFSET));
-	fsbl_printf(DEBUG_INFO,"PCAP UNLOCK 0x%x: 0x%08lx\r\n",
-		XPS_DEV_CFG_APB_BASEADDR + XDCFG_UNLOCK_OFFSET,
-		Xil_In32(XPS_DEV_CFG_APB_BASEADDR + XDCFG_UNLOCK_OFFSET));
-	fsbl_printf(DEBUG_INFO,"PCAP MCTRL 0x%x: 0x%08lx\r\n",
-		XPS_DEV_CFG_APB_BASEADDR + XDCFG_MCTRL_OFFSET,
-		Xil_In32(XPS_DEV_CFG_APB_BASEADDR + XDCFG_MCTRL_OFFSET));
+	for (i = 0; i < (sizeof(Regs) / sizeof(Regs[0])); i++) {
+		fsbl_printf(DEBUG_INFO, "PCAP %s 0x%x: 0x%08lx\r\n",
+			Regs[i].Name,
+			XPS_DEV_CFG_APB_BASEADDR + Regs[i].Offset,
+			Xil_In32(XPS_DEV_CFG_APB_BASEADDR + Regs[i].Offset));
+	}
 }
 
 /******************************************************************************/

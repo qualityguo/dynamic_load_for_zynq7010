@@ -955,38 +955,40 @@ FSBL (slim) Jun 22 2026 12:00:00
 
 ## Phase 3：FSBL → SSBL 链通（M3）
 
-**目标**：用 bootgen 把 fsbl.elf + ssbl.bin 打包成 BOOT.bin，烧 SD 卡上电，从 BootROM 一路跑到 SSBL 的 LED 闪烁。这是第一次"真启动链"验证。
+**目标**：用 bootgen 把 fsbl.elf + ssbl.elf 打包成 BOOT.bin，烧 SD 卡上电，从 BootROM 一路跑到 SSBL 的 LED 闪烁。这是第一次"真启动链"验证。
 
 **Spec 引用**：§13.1、§13.2。
 
-### Task 3.1：objcopy ssbl.elf → ssbl.bin
+### Task 3.1：确认 ssbl.elf 可被 bootgen 直接消费
+
+**说明**：SSBL 直接以 `ssbl.elf` 交给 bootgen（spec §13.2），**不做 `objcopy -O binary`**。bootgen 从 ELF 的 program headers 读取段信息、加载地址与入口地址，故这里只需核对 ELF 元数据正确，无需生成 `.bin`。
 
 **Files:**
-- Create: `boot/ssbl/_vitis_ws/ssbl/Debug/ssbl.bin`（产物）
+- （无新文件；复用 Phase 1 Task 1.2 的产物 `boot/ssbl/_vitis_ws/ssbl/Debug/ssbl.elf`）
 
-- [ ] **Step 1：objcopy 出 raw binary**
-
-```bash
-arm-none-eabi-objcopy -O binary \
-  boot/ssbl/_vitis_ws/ssbl/Debug/ssbl.elf \
-  boot/ssbl/_vitis_ws/ssbl/Debug/ssbl.bin
-```
-
-- [ ] **Step 2：核对 ssbl.bin 大小**
+- [ ] **Step 1：确认 ssbl.elf 已生成**
 
 ```bash
-ls -la boot/ssbl/_vitis_ws/ssbl/Debug/ssbl.bin
+ls -la boot/ssbl/_vitis_ws/ssbl/Debug/ssbl.elf
 ```
 
-期望：< 1MB（ORIGIN=0x100000、LENGTH=0x100000）。
+期望：文件存在（Phase 1 Task 1.2 Build 产物）。
 
-- [ ] **Step 3：核对首字节**
+- [ ] **Step 2：核对 ELF 入口地址**
 
 ```bash
-xxd boot/ssbl/_vitis_ws/ssbl/Debug/ssbl.bin | head -1
+arm-none-eabi-readelf -h boot/ssbl/_vitis_ws/ssbl/Debug/ssbl.elf | grep Entry
 ```
 
-期望：首字节是 reset 向量（通常是 `ldr pc, [pc, #N]` 的 ARM 编码 `0xe59ff...`）。
+期望：`Entry point address` ≥ `0x100000` 且 < `0x200000`（`_vector_table` 在 `ssbl.ld` 的 `ORIGIN=0x100000` 区域内）。
+
+- [ ] **Step 3：核对 program header 的加载地址**
+
+```bash
+arm-none-eabi-readelf -l boot/ssbl/_vitis_ws/ssbl/Debug/ssbl.elf | grep -E "LOAD|0x"
+```
+
+期望：第一个 `LOAD` 段的 `VirtAddr` 起始于 `0x00100000`（与 `ssbl.ld` 的 `ORIGIN` 一致）——这正是 bootgen 写入 BOOT.bin partition 的 load address，无需在 bif 里额外指定。
 
 ---
 
@@ -1003,7 +1005,7 @@ xxd boot/ssbl/_vitis_ws/ssbl/Debug/ssbl.bin | head -1
 the_ROM_image:
 {
     [bootloader, destination_cpu = a9_0]   boot/fsbl/_vitis_ws/fsbl/Debug/fsbl.elf
-    [destination_cpu = a9_0]               boot/ssbl/_vitis_ws/ssbl/Debug/ssbl.bin
+    [destination_cpu = a9_0]               boot/ssbl/_vitis_ws/ssbl/Debug/ssbl.elf
 }
 ```
 
@@ -1082,11 +1084,13 @@ git commit -m "Phase 3.3: bootgen packaging scripts"
 
 **说明**：需物理板 + SD 卡。
 
-- [ ] **Step 1：格式化 SD 卡为 FAT32**
+> **介质状态说明**：此阶段 SD 卡**单分区即可**（BootROM 从首 FAT 分区读 BOOT.bin，单分区时首分区即整张卡，能验证启动链）。**双分区隔离（spec §5.5）在 Phase 4.0 才引入**——那时才需要把 BOOT.bin 单独放 P1。本 Task 用最简单的单分区先把 FSBL→SSBL 链跑通。
 
-用 Windows 磁盘管理或 `diskpart` 格式化为 FAT32。
+- [ ] **Step 1：格式化 SD 卡为 FAT32（单分区，本阶段足够）**
 
-- [ ] **Step 2：拷贝 BOOT.bin 到 SD 卡根目录**
+用 Windows 磁盘管理或 `diskpart` 格式化为 FAT32（单分区）。
+
+- [ ] **Step 2：拷贝 BOOT.bin 到 SD 卡（首分区根目录）**
 
 ```bash
 cp bif/BOOT.BIN <SD卡盘符>:/
@@ -1106,8 +1110,8 @@ FSBL (slim) ...
 
 | 现象 | 可能原因 |
 |---|---|
-| 完全无输出 | boot mode pins 错；BOOT.bin 烧错位置（必须根目录）；SD 卡未格式化 FAT32 |
-| 只见 FSBL banner 不见 SSBL | ssbl.bin 没打包进 BOOT.bin；image_mover 没找到 a9_0 partition；FSBL handoff 跳错地址 |
+| 完全无输出 | boot mode pins 错；BOOT.bin 烧错位置（必须在首 FAT 分区根目录）；SD 卡未格式化 FAT32 |
+| 只见 FSBL banner 不见 SSBL | ssbl.elf 没打包进 BOOT.bin；image_mover 没找到 a9_0 partition；FSBL handoff 跳错地址 |
 | SSBL 起来后 hard fault | ssbl.elf ORIGIN 不对；reset.S 与 ssbl.ld 不匹配 |
 | LED 不闪但串口 OK | 同 Phase 1 Task 1.3 Step 5 |
 
@@ -1121,9 +1125,134 @@ git commit --allow-empty -m "Phase 3.4: FSBL→SSBL chain verified on hardware"
 
 ## Phase 4：storage 抽象层 + FileX SD 挂载（M4）
 
-**目标**：实现 spec §11 的 `storage_ops_t` 抽象，先做 SD 实现（复用 vendor `fx_zynq_sdio_driver`），SSBL 能挂载 SD 卡并执行 `ls`/`cat` 命令（CLI 在 Phase 7，本 Phase 先把 storage + 简易 shell 函数打通）。
+**目标**：实现 spec §11 的 `storage_ops_t` 抽象，先做 SD 实现（复用 vendor `fx_zynq_sdio_driver`），SSBL 能挂载 **SD 卡 P2 数据分区**并执行 `ls`/`cat` 命令（CLI 在 Phase 7，本 Phase 先把 storage + 简易 shell 函数打通）。
 
-**Spec 引用**：§11.1（接口设计）、§11.2 阶段 A（SD + FileX FAT）。
+**Spec 引用**：§11.1（接口设计）、§11.2 阶段 A、**§5.5 存储隔离原则**。
+
+> **★ 关键约束（spec §5.5）**：SD 卡必须先格式化为**双 FAT32 分区**——P1（8MB）仅放 BOOT.BIN、P2（剩余）放数据。SSBL 的 `fx_media_open` **只挂载 P2**，绝不覆盖 P1，从而把升级写入与 BOOT.bin 簇链物理隔离。本 Phase 的 Task 4.0 先完成双分区格式化，后续 Task 在此基础上挂载 P2。
+
+### Task 4.0：格式化 SD 卡为双 FAT32 分区（前置，spec §5.5.3）
+
+**Files:**
+- Create: `scripts/format_sd_card.sh`、`scripts/format_sd_card.ps1`
+- Create: `scripts/README_sd_format.md`
+
+- [ ] **Step 1：写 format_sd_card.ps1（Windows 主用）**
+
+文件 `scripts/format_sd_card.ps1` 内容（用 diskpart 脚本化双分区）：
+
+```powershell
+# format_sd_card.ps1 — 把 SD 卡格式化为双 FAT32 分区（spec §5.5.3）
+# 用法：pwsh format_sd_card.ps1 <SD盘符或磁盘号>
+#   例：pwsh format_sd_card.ps1 E      # 盘符 E:
+#       pwsh format_sd_card.ps1 2      # 磁盘号 2（diskpart list disk 确认）
+#
+# 产物：P1=8MB FAT32（仅 BOOT.BIN），P2=剩余 FAT32（数据）
+# 危险：会清空目标盘所有数据！运行前务必用 diskpart list disk 确认盘号。
+
+$ErrorActionPreference = "Stop"
+if ($args.Count -lt 1) {
+    Write-Error "用法：pwsh format_sd_card.ps1 <SD盘符或磁盘号>"
+    exit 1
+}
+$target = $args[0]
+
+# 生成 diskpart 脚本（按磁盘号清理 + 双分区）
+# P1: size=8192 (8MB) FAT32，标记 bootable（BootROM 要求首个 FAT 分区）
+# P2: 剩余空间 FAT32
+$dpScript = @"
+select disk $target
+clean
+create partition primary size=8192
+format quick fs=fat32 label=P1_BOOT
+active
+create partition primary
+format quick fs=fat32 label=P2_DATA
+exit
+"@
+$dpScript | diskpart
+Write-Host "双分区完成：P1=8MB(P1_BOOT) / P2=剩余(P2_DATA)"
+Write-Host "下一步：把 BOOT.BIN 拷到 P1，其余文件放 P2"
+```
+
+- [ ] **Step 2：写 format_sd_card.sh（Linux/Git Bash 备用，用 fdisk + mkfs.fat）**
+
+文件 `scripts/format_sd_card.sh`：
+
+```bash
+#!/usr/bin/env bash
+# format_sd_card.sh — Linux/Git Bash 双分区（spec §5.5.3）
+# 用法：sudo ./format_sd_card.sh /dev/sdX
+set -euo pipefail
+DEV="${1:?用法: $0 /dev/sdX}"
+# 卸载可能挂载的分区
+umount "${DEV}"* 2>/dev/null || true
+# 清空分区表 + 双分区：P1=8MB bootable, P2=剩余
+# 用 sfdisk 脚本化（label: dos）
+sfdisk "$DEV" <<EOF
+label: dos
+,8192M,b,*
+,,b,
+EOF
+# 格式化
+mkfs.fat -F32 -n P1_BOOT "${DEV}1"
+mkfs.fat -F32 -n P2_DATA "${DEV}2"
+echo "双分区完成：P1=8MB(P1_BOOT) / P2=剩余(P2_DATA)"
+```
+
+- [ ] **Step 3：写 README_sd_format.md（操作说明 + 验证）**
+
+文件 `scripts/README_sd_format.md`：
+
+```markdown
+# SD 卡双分区格式化（spec §5.5.3）
+
+## 为什么双分区
+
+隔离 BOOT.BIN 与升级数据，避免共享 FAT 表导致变砖（见 spec §5.5）。
+P1 只放 BOOT.BIN（烧录后只读），P2 放所有可变数据（app/bit/cfg）。
+
+## 步骤
+
+1. 确认 SD 卡盘号/盘符（diskpart `list disk` 或 `lsblk`）
+2. 运行：
+   - Windows: `pwsh scripts\format_sd_card.ps1 <盘号>`
+   - Linux:   `sudo ./scripts/format_sd_card.sh /dev/sdX`
+3. 验证：资源管理器应出现两个盘符（P1_BOOT ~8MB, P2_DATA 剩余）
+4. 把 `BOOT.BIN` 拷到 **P1**（仅此一个文件）
+5. 其余文件（app/bit/cfg）拷到 **P2**
+
+## 验证双分区（关键）
+
+启动板子后 SSBL 的 `ls` 命令应只看到 P2 的内容（app/cfg/...），
+**不应看到 BOOT.BIN**——这证明 SSBL 只挂了 P2，隔离生效。
+若 ls 能看到 BOOT.BIN，说明挂载了 P1，需回查 Task 4.3 的分区解析。
+```
+
+- [ ] **Step 4：手动跑一次格式化（需物理 SD 卡）**
+
+```powershell
+# Windows 示例（盘号从 diskpart list disk 确认，假设是 2）
+diskpart
+# 在 diskpart 交互里先 list disk 确认，再 exit
+pwsh scripts\format_sd_card.ps1 2
+```
+
+期望：完成后资源管理器出现两个盘符 P1_BOOT（~8MB）、P2_DATA（剩余）。
+
+- [ ] **Step 5：拷贝 BOOT.BIN 到 P1 验证 BootROM 能启动**
+
+把 Phase 3 产出的 `bif/BOOT.BIN` 拷到 **P1**（不是 P2），设 SD boot mode 上电。
+期望：FSBL banner + SSBL banner 正常出现（证明 BootROM 能从 P1 的 FAT 找到 BOOT.BIN）。
+
+- [ ] **Step 6：提交脚本**
+
+```bash
+git add scripts/format_sd_card.ps1 scripts/format_sd_card.sh scripts/README_sd_format.md
+git commit -m "Phase 4.0: dual-partition SD format (P1=BOOT.BIN, P2=data) per spec §5.5"
+```
+
+---
 
 ### Task 4.1：写 storage.h 接口
 
@@ -1339,10 +1468,12 @@ git commit -m "Phase 4.2: FileX glue callbacks (media/file/dir) shared by sd_por
 
 ---
 
-### Task 4.3：写 sd_port.c（绑定 fx_zynq_sdio_driver）
+### Task 4.3：写 sd_port.c（绑定 fx_zynq_sdio_driver，挂载 P2 数据分区）
 
 **Files:**
 - Create: `boot/ssbl/storage/sd_port.c`
+
+> **★ 关键（spec §5.5.3）**：sd_port **只挂载 P2 数据分区**，不挂 P1（P1 的 BOOT.BIN 与 SSBL 完全隔离）。FileX 的 `fx_zynq_sdio_driver` 按 LBA 读 SD；要让 FileX 认为扇区 0 是 P2 的起始，需要在挂载前读 MBR、解析 P2 的起始 LBA，并把该偏移记录下来供 driver 的读路径加上。
 
 - [ ] **Step 1：参考 vendor hello_filex/demo_sd_file.c 的初始化流程**
 
@@ -1350,15 +1481,21 @@ git commit -m "Phase 4.2: FileX glue callbacks (media/file/dir) shared by sd_por
 cat external/demo_sd_file_reference.c | head -150
 ```
 
-记录 `fx_system_initialize`、`fx_media_open`、SDIO driver 注册的调用次序。
+记录 `fx_system_initialize`、`fx_media_open`、SDIO driver 注册的调用次序。注意 vendor demo 默认挂载首分区（单分区场景）；本工程需改为挂载 **P2**。
 
-- [ ] **Step 2：写 sd_port.c**
+- [ ] **Step 2：写 sd_port.c（含 P2 LBA 偏移逻辑）**
 
 文件 `boot/ssbl/storage/sd_port.c`：
 
 ```c
 /* boot/ssbl/storage/sd_port.c — SD 卡 storage 后端
- * 绑定 vendor fx_zynq_sdio_driver，提供 storage_ops_t 实例 g_sd_storage。
+ * 绑定 vendor fx_zynq_sdio_driver，只挂载 P2 数据分区（spec §5.5.3）。
+ * P1（BOOT.BIN）与 SSBL 完全隔离——SSBL 不读不写 P1。
+ *
+ * 实现 P2 偏移的两种方式（实现时任选其一，推荐 A）：
+ *   A) 包装 fx_zynq_sdio_driver：读请求里把 FileX 的逻辑扇区号 + P2 起始 LBA
+ *      再透传给原 driver。这样 FileX 看到的"扇区 0"实际是 P2 第一个扇区。
+ *   B) 若 fx_zynq_sdio_driver 内部已支持 media 偏移寄存器，则直接配置。
  */
 
 #include "storage.h"
@@ -1393,19 +1530,63 @@ const storage_ops_t g_sd_storage = {
     .dir_list    = storage_fx_dir_list,
 };
 
-/* SSBL 初始化时调用：设置 g_storage + 注册 driver */
+/* P2 起始 LBA（解析 MBR 得到，见 sd_port_read_partition_table） */
+static uint32_t g_p2_start_lba = 0;
+
+/* 读 MBR（LBA 0），解析第 2 个分区表项得 P2 起始 LBA。
+ * MBR 分区表项布局（每项 16 字节，偏移 0x1BE 起）：
+ *   byte[8..11] = 该分区起始 LBA（little-endian）
+ *   第 2 项 = 偏移 0x1CE + 8 = 0x1D6
+ * 返回 0=OK，负数=失败。
+ */
+static int sd_port_read_partition_table(void)
+{
+    uint8_t mbr[512];
+    /* 用裸 SDIO 读 LBA 0（绕过 FileX，因为此刻 FileX 还没挂载）。
+     * 复用 fx_zynq_sdio_driver 的底层读，或 Xilinx xsdps 直接读。
+     */
+    if (sd_raw_read_sector(0, mbr) != 0) {
+        return -1;
+    }
+    /* 简单校验 MBR 签名 0x55AA */
+    if (mbr[510] != 0x55 || mbr[511] != 0xAA) {
+        return -2;
+    }
+    /* P2 起始 LBA（第 2 个分区表项，偏移 0x1D6，4 字节 little-endian） */
+    g_p2_start_lba =   (uint32_t)mbr[0x1D6]
+                     | ((uint32_t)mbr[0x1D7] << 8)
+                     | ((uint32_t)mbr[0x1D8] << 16)
+                     | ((uint32_t)mbr[0x1D9] << 24);
+    return (g_p2_start_lba != 0) ? 0 : -3;
+}
+
+/* SSBL 初始化时调用：设置 g_storage + 注册 driver + 解析 P2 偏移 */
 void sd_port_init(void)
 {
-    storage_fx_set_driver(fx_zynq_sdio_driver, "SD_CARD");
+    /* 先解析 MBR 得 P2 起始 LBA，供 driver 包装层加偏移 */
+    if (sd_port_read_partition_table() != 0) {
+        xil_printf("[sd_port] WARN: P2 partition not found, default LBA=0\r\n");
+        g_p2_start_lba = 0;   /* 退化：挂 P1（仅调试用，正常不应走到这） */
+    } else {
+        xil_printf("[sd_port] P2 start LBA = %lu\r\n", g_p2_start_lba);
+    }
+
+    /* 注册带 P2 偏移的 driver 包装（方式 A） */
+    storage_fx_set_driver(sd_driver_with_p2_offset, "SD_P2");
     g_storage = &g_sd_storage;
 }
 ```
+
+> **Implementation note**：
+> - `sd_raw_read_sector` 与 `sd_driver_with_p2_offset` 是本 port 新增的薄包装：前者封装 xsdps 裸读单扇区（挂载前用），后者在每次 FileX 读请求里把逻辑扇区号 `+= g_p2_start_lba` 再调原 `fx_zynq_sdio_driver`。
+> - **绝不能让 FileX 挂载覆盖 LBA 0**（P1 区）——这是 §5.5 隔离原则在代码层的体现。若 MBR 解析失败，宁可告警也不退而挂 P1。
+> - FileX 是否原生支持 "media open at offset" 需查 FileX 版本文档；若支持则用原生机制，否则用本 Task 的 driver 包装。
 
 - [ ] **Step 3：提交**
 
 ```bash
 git add boot/ssbl/storage/sd_port.c
-git commit -m "Phase 4.3: sd_port.c binds fx_zynq_sdio_driver to storage_ops_t"
+git commit -m "Phase 4.3: sd_port.c mounts only P2 data partition (spec §5.5 isolation)"
 ```
 
 ---
@@ -1513,21 +1694,26 @@ Import → `external/filex/FileX/fx_zynq_sdio_driver.c` 到 ssbl 工程；includ
 
 期望：编译通过。若 `fx_zynq_sdio_driver.c` 依赖 BSP 的 `xsdps` 驱动（Xilinx SD controller），需在 Vitis BSP 设置中勾选 `xilffs` 与 `sdps` 库。
 
-- [ ] **Step 6：JTAG 下载验证（SD 卡里放一个 boot.cfg 测试文件）**
+- [ ] **Step 6：JTAG 下载验证（P2 放测试文件，验证隔离）**
+
+先把 SD 卡按 Task 4.0 格式化为双分区，然后在 **P2** 放 `boot.cfg`：
 
 ```bash
-echo "app = app_current.bin" > <SD>:/boot.cfg
+echo "app = app_current.bin" > <P2盘符>:/boot.cfg
 ```
 
 JTAG 下载 ssbl.elf，期望串口：
 ```
+[sd_port] P2 start LBA = <某个非零值>
 [SSBL] storage media opened
 [SSBL] storage_test: listing root
-  BOOT.BIN
   boot.cfg
 [SSBL] boot.cfg contents:
 app = app_current.bin
 ```
+
+**★ 隔离验证关键点**：`ls` 输出里**不应出现 BOOT.BIN**——这证明 SSBL 只挂了 P2、够不到 P1（spec §5.5.3）。
+若 ls 能看到 BOOT.BIN，说明误挂了 P1（或 P2 偏移未生效），必须回查 Task 4.3 的 MBR 解析与 driver 包装——这是隔离失效的明确信号。
 
 - [ ] **Step 7：提交**
 
@@ -2365,8 +2551,8 @@ git commit -m "Phase 5.6: handoff_exit.S (asm cleanup) + handoff.c (C entry), sp
 cd /e/桌面/docs/Code
 arm-none-eabi-objcopy -O binary boot/app_template/_vitis_ws/app/Debug/app.elf /tmp/app.raw
 python scripts/pack_app.py /tmp/app.raw /tmp/app.bin
-# 拷到 SD 卡
-cp /tmp/app.bin <SD>:/app_current.bin
+# 拷到 SD 卡 P2 数据分区（spec §5.5：app 落 P2，不落 P1）
+cp /tmp/app.bin <P2盘符>:/app_current.bin
 ```
 
 - [ ] **Step 2：临时改 storage_test_thread 为 load+jump**
@@ -2388,13 +2574,13 @@ cp /tmp/app.bin <SD>:/app_current.bin
     }
 ```
 
-- [ ] **Step 3：Build SSBL，烧 BOOT.bin 到 SD（含新 ssbl.bin）**
+- [ ] **Step 3：Build SSBL，烧 BOOT.bin 到 SD P1（含新 ssbl.elf）**
 
 ```bash
-# 重新 objcopy + bootgen
-arm-none-eabi-objcopy -O binary boot/ssbl/_vitis_ws/ssbl/Debug/ssbl.elf boot/ssbl/_vitis_ws/ssbl/Debug/ssbl.bin
+# 直接用 ssbl.elf 打包（spec §13.2，无需 objcopy）
 pwsh scripts/build_boot_bin.ps1
-cp bif/BOOT.BIN <SD>:/
+# BOOT.bin 落 P1（spec §5.5：P1 仅放 BOOT.BIN）
+cp bif/BOOT.BIN <P1盘符>:/
 ```
 
 - [ ] **Step 4：上电观察**
@@ -4179,9 +4365,11 @@ git commit --allow-empty -m "Phase 7 verified: trigger + CLI command set functio
 
 ## Phase 8：YMODEM 两阶段升级（M8）
 
-**目标**：实现 spec §6.3 #3 的两阶段升级流程。YMODEM 接收 → DDR 暂存区（`0x02000000`，10MB）→ DDR 内校验（app 双 CRC / bit Xilinx 头）→ 用户 `y` 确认 → `.tmp + rename` 原子提交。传输失败 / 校验失败 / 用户拒绝均保证 SD 卡零写入。
+**目标**：实现 spec §6.3 #3 的两阶段升级流程。YMODEM 接收 → DDR 暂存区（`0x02000000`，10MB）→ DDR 内校验（app 双 CRC / bit Xilinx 头）→ 用户 `y` 确认 → `.tmp + rename` 原子提交**到 P2 数据分区**。传输失败 / 校验失败 / 用户拒绝均保证 SD 卡零写入。
 
-**Spec 引用**：§2（DDR 暂存区 10MB）、§6.3 #3（两阶段流程）、§9.5（app 校验流程）、§4.2（bit 校验）。
+**Spec 引用**：§2（DDR 暂存区 10MB）、§6.3 #3（两阶段流程）、§9.5（app 校验流程）、§4.2（bit 校验）、**§5.5（隔离：提交只写 P2）**。
+
+> **★ 隔离约束（spec §5.5）**：所有升级提交（`storage_file_write` / `storage_file_rename`）通过 storage 抽象层走，底层已是 P2（Phase 4.3 的 `sd_port` 只挂 P2）。YMODEM 代码**无需感知分区**——只要不绕过 storage 层直接操作 SD，就天然只写 P2，物理上够不到 P1 的 BOOT.BIN。Task 8.x 的实现里**不得**新增任何绕过 storage 层的裸 SD 写。
 
 ### Task 8.1：写 cli_staging.h 与 DDR 暂存区管理
 
@@ -4971,11 +5159,16 @@ git commit -m "Phase 9.1: dynamic bitstream load via FSBL-reused PCAP (spec §4.
 
 ---
 
-## Phase 10：错误处理 + LED 错误码 + boot.log/OCM 标记（M10）
+## Phase 10：错误处理 + LED 错误码 + OCM 标记（M10）
 
-**目标**：实现 spec §10 全章节——错误分级、LED 错误码（无串口诊断）、boot.log 持久化（OCM magic + 下次启动回填，spec §10.4 修订后版本）。
+**目标**：实现 spec §10 全章节——错误分级、LED 错误码（无串口诊断）、OCM 双状态机（BOOT_ATTEMPT_MAGIC / BOOT_OK_MAGIC）。
 
-**Spec 引用**：§10.1 错误分级、§10.2 日志、§10.3 LED 错误码、§10.4 boot.log（OCM 双状态机）。
+> **★ boot.log 当前阶段排除（用户决策，spec §10.4）**：本 Phase **不实现** boot.log 的 SD 持久化部分（每次启动的 FAT 写是共享 FAT 表变砖风险的最大来源，spec §5.5.1）。仅实现：
+> - §10.1 错误分级、§10.2 日志宏、§10.3 LED 错误码 —— **本次实现**
+> - §10.4 OCM 双状态机（写 magic + 下次启动读回） —— **本次实现，但回填结果只走串口打印，不落 SD**
+> - §10.4 boot.log 文件持久化 —— **推迟**，待后期明确隔离需求后 reintroduce（届时必须落 P2/数据段，见 spec §10.4 末尾约束）
+
+**Spec 引用**：§10.1 错误分级、§10.2 日志、§10.3 LED 错误码、§10.4 boot.log（OCM 双状态机，**仅 OCM 部分；FAT 持久化推迟**）。
 
 ### Task 10.1：写 ssbl_error.h 与 ssbl_config.h
 
@@ -5190,6 +5383,11 @@ git commit -m "Phase 10.2: ssbl_fatal with LED blink code (spec §10.1 + §10.3)
 ---
 
 ### Task 10.3：写 boot_log + OCM magic 状态机（spec §10.4 修订版）
+
+> **★ 当前阶段裁剪（spec §10.4 / §5.5）**：本 Task 实现 **OCM magic 状态机部分**（写 ATTEMPT/OK magic、下次启动读回），但 **boot.log 的 FAT 文件持久化部分推迟**。具体：
+> - **本次实现**：OCM 双状态机（`boot_log_mark_attempt` / `boot_log_check_previous`）+ 串口打印上次状态
+> - **本次跳过**：下方 Step 中所有"写 boot.log 文件 / 环形覆盖 8 条"的 FAT 写逻辑（标注为 `/* 推迟 */` 或 `#if 0` 包起来）——这些是每次启动的 FAT 写，是 §5.5.1 变砖风险最大来源，在隔离充分验证前不启用
+> - **后期 reintroduce**：恢复 FAT 写时必须确认写入落 P2（spec §10.4 末尾约束）
 
 **Files:**
 - Create: `boot/ssbl/src/boot_log.c`
@@ -5450,6 +5648,8 @@ git commit -m "Phase 10.3: OCM magic state machine + boot.log ringback (spec §1
 
 ### Task 10.4：CLI `status` 命令接 boot.log
 
+> **★ 随 Task 10.3 同步推迟（spec §10.4）**：`status` 命令依赖 `boot_log_last_entry`，而后者依赖 FAT 持久化（当前推迟）。本 Task **当前阶段跳过**——`status` 命令可临时改为"从 OCM magic 读上次状态并串口打印"（只读 OCM，无 FAT 写），作为占位。完整版（读 boot.log 历史 8 条）待 Task 10.3 的 FAT 持久化 reintroduce 后再补。
+
 **Files:**
 - Modify: `boot/ssbl/cli/cli_commands.c`
 
@@ -5530,6 +5730,11 @@ ls external/levelx/common/inc/lx_api.h
  *   FileX (FAT) → FileX NOR driver（本文件）→ LevelX NOR → xqspips
  *
  * 本 Phase 给骨架；具体 NOR flash 型号相关常数（块/页大小）按板载填。
+ *
+ * ★ 存储隔离（spec §5.5.4）：FS 只覆盖 BOOT.bin 之后的数据段。
+ *   BootROM 从 flash offset 0 裸读 BOOT.bin，本 driver 把 FileX 的逻辑扇区
+ *   加上 FS_START_SECTOR 偏移后再映射到物理扇区，保证 FS 写操作永远够不到
+ *   低地址的 BOOT.bin 区段。FS_START_SECTOR 依 BOOT.bin 大小对齐到扇区。
  */
 
 #include "storage.h"
@@ -5556,17 +5761,30 @@ extern void storage_fx_set_driver(VOID (*)(FX_MEDIA *), const char *);
 /* LevelX NOR 实例（按板载 NOR 型号选 LX_NOR_FLASH_INSTANCE）*/
 static LX_NOR_FLASH  g_lx_nor;
 
-/* FileX → LevelX NOR driver（FileX 调本函数做扇区操作）*/
+/* ★ FS 数据段起始扇区（spec §5.5.4）
+ *   = ROUND_UP(BOOT.bin 区段大小, FX_SECTOR_SIZE) / FX_SECTOR_SIZE
+ *   依 bootgen 产物大小定；例 BOOT.bin 占 0xF0000（~960KB），扇区 512B
+ *   → FS_START_SECTOR = 0xF0000/512 = 3072。
+ *   必须编译期静态断言其 > BOOT.bin 区段，否则隔离失效。
+ */
+#ifndef FS_START_SECTOR
+#define FS_START_SECTOR  3072U   /* 占位值；实施时按实际 BOOT.bin 大小重算 */
+#endif
+
+/* FileX → LevelX NOR driver（FileX 调本函数做扇区操作）
+ * ★ 关键：把 FileX 逻辑扇区 + FS_START_SECTOR 再映射到物理扇区，
+ *   从而把 FS 限定在 [FS_START_SECTOR, END] 高地址段，不碰 BOOT.bin 区。*/
 static VOID fx_lx_nor_driver(FX_MEDIA *media)
 {
     /* 按 media->fx_media_driver_request 分发：
      *   FX_DRIVER_INIT     → lx_nor_flash_initialize (&g_lx_nor)
-     *   FX_DRIVER_READ     → lx_nor_flash_sector_read (logical, buf)
-     *   FX_DRIVER_WRITE    → lx_nor_flash_sector_write(logical, buf)
+     *   FX_DRIVER_READ     → lx_nor_flash_sector_read (logical + FS_START_SECTOR, buf)
+     *   FX_DRIVER_WRITE    → lx_nor_flash_sector_write(logical + FS_START_SECTOR, buf)
      *   FX_DRIVER_RELEASE  → 无操作
      *   FX_DRIVER_FLUSH    → lx_nor_flash_defragment（可选）
      *   FX_DRIVER_UNINIT   → 无操作
      * 完整映射见 LevelX 用户手册 "FileX with LevelX" 章节。
+     * ★ 每个扇区操作都加 FS_START_SECTOR 偏移——这是隔离的支点。
      */
     ULONG logical_sector;
     UCHAR *buf;
@@ -5578,7 +5796,7 @@ static VOID fx_lx_nor_driver(FX_MEDIA *media)
         media->fx_media_driver_status = FX_SUCCESS;
         break;
     case FX_DRIVER_READ:
-        logical_sector = media->fx_media_driver_logical_sector;
+        logical_sector = media->fx_media_driver_logical_sector + FS_START_SECTOR;
         buf = media->fx_media_driver_buffer;
         for (ULONG i = 0; i < media->fx_media_driver_sectors; i++) {
             lx_nor_flash_sector_read(&g_lx_nor, logical_sector + i,
@@ -5587,7 +5805,7 @@ static VOID fx_lx_nor_driver(FX_MEDIA *media)
         media->fx_media_driver_status = FX_SUCCESS;
         break;
     case FX_DRIVER_WRITE:
-        logical_sector = media->fx_media_driver_logical_sector;
+        logical_sector = media->fx_media_driver_logical_sector + FS_START_SECTOR;
         buf = media->fx_media_driver_buffer;
         for (ULONG i = 0; i < media->fx_media_driver_sectors; i++) {
             lx_nor_flash_sector_write(&g_lx_nor, logical_sector + i,
@@ -5628,7 +5846,9 @@ void qspi_port_init(void)
 }
 ```
 
-> **Note**：上例假设 LevelX 已 `lx_nor_flash_initialize` 接好 `xqspips` 底层驱动。LevelX 要求 NOR flash 提供 `read_sector/write_sector/erase_block` 的 callback——具体与 `xqspips` 对接代码依板载 NOR 型号（如 MT25Q、W25Q）而异，本计划只给接口骨架，细节在 Phase 11 实施时按板子填写。
+> **Note**：
+> - 上例假设 LevelX 已 `lx_nor_flash_initialize` 接好 `xqspips` 底层驱动。LevelX 要求 NOR flash 提供 `read_sector/write_sector/erase_block` 的 callback——具体与 `xqspips` 对接代码依板载 NOR 型号（如 MT25Q、W25Q）而异，本计划只给接口骨架，细节在 Phase 11 实施时按板子填写。
+> - **★ FS_START_SECTOR 必须重算**：实施时用 `arm-none-eabi-size` 或 hexdump 量出 BOOT.bin 实际占用，按扇区大小（通常 512B 或 NOR 页大小）向上取整，留足余量。隔离的正确性完全依赖此值 > BOOT.bin 区段——建议加编译期 `_Static_assert(FS_START_SECTOR * FX_SECTOR_SIZE > BOOT_BIN_MAX_SIZE)`。
 
 - [ ] **Step 2：SSBL 编译开关：SD vs QSPI**
 
@@ -5657,9 +5877,18 @@ int main(void)
         ssbl_fatal(LED_CODE_SD_MOUNT, "storage mount failed");
     }
 
-    /* QSPI 首次需要 fx_media_format（spec §11.2）*/
+    /* QSPI 首次需要 fx_media_format（spec §11.2）。
+     * ★ media_available_sectors 要扣掉 FS_START_SECTOR，只用数据段
+     *   （spec §5.5.4：FS 不覆盖 BOOT.bin 区）。*/
 #ifdef SSBL_USE_QSPI_FIRST_FORMAT
-    fx_media_format(&g_fx_media, fx_lx_nor_driver, 0, ...);
+    ULONG total_sectors = (NOR_FLASH_SIZE / FX_SECTOR_SIZE);
+    ULONG data_sectors  = total_sectors - FS_START_SECTOR;   /* 数据段扇区数 */
+    fx_media_format(&g_fx_media,                 /* FX_MEDIA */
+                    fx_lx_nor_driver, 0,         /* driver + ptr */
+                    0,                            /* 留：driver 内部已加 FS_START_SECTOR */
+                    data_sectors,                 /* ★ 只格式化数据段，不含 BOOT.bin */
+                    FX_SECTOR_SIZE,               /* bytes per sector */
+                    /* …其余 FAT 几何参数按 NOR 填… */);
 #endif
 
     /* … */
@@ -5694,11 +5923,11 @@ git commit -m "Phase 11.2: QSPI NOR backend (FileX + LevelX) skeleton (spec §11
 the_ROM_image:
 {
     [bootloader, destination_cpu = a9_0]   boot/fsbl/_vitis_ws/fsbl/Debug/fsbl.elf
-    [destination_cpu = a9_0]               boot/ssbl/_vitis_ws/ssbl/Debug/ssbl.bin
+    [destination_cpu = a9_0]               boot/ssbl/_vitis_ws/ssbl/Debug/ssbl.elf
 }
 ```
 
-> **Note**：bootgen 对 QSPI 也用同样 bif 文件，差别在烧写方式（bootgen 生成的是统一 BOOT.bin，只是介质接口不同）。
+> **Note**：bootgen 对 QSPI 也用同样 bif 文件，差别在烧写方式（bootgen 生成的是统一 BOOT.bin，只是介质接口不同）。SSBL 与 SD 方案一致，直接以 `ssbl.elf` 交给 bootgen。
 
 - [ ] **Step 2：bootgen 生成 BOOT.bin（不变）**
 
@@ -5706,6 +5935,12 @@ the_ROM_image:
 cd bif
 bootgen -image boot_qspi.bif -arch zynq -out BOOT_QSPI.BIN -w on
 ```
+
+> **★ 量出 BOOT_QSPI.BIN 大小，回填 FS_START_SECTOR（spec §5.5.4）**：
+> ```bash
+> ls -l BOOT_QSPI.BIN
+> ```
+> BOOT_QSPI.BIN 实际字节数按 FX_SECTOR_SIZE 向上取整 / FX_SECTOR_SIZE，**必须 ≤** `qspi_port.c` 里的 `FS_START_SECTOR`。若 BOOT.bin 长大了超过原 FS_START_SECTOR，需同步调大 FS_START_SECTOR 并重新 `fx_media_format` 数据段。这是 QSPI 隔离的唯一硬约束——BOOT.bin 区段与 FS 数据段在地址上不重叠。
 
 - [ ] **Step 3：用 SDK/Vitis 的 Flash Programmer 烧到 QSPI**
 
@@ -5717,6 +5952,8 @@ targets -set -filter {name =~ "APU"}
 fpga -f <path-to-flash-programmer-bit>
 # 然后用 SDK Flash Programmer GUI 选 BOOT_QSPI.BIN 烧到 QSPI offset 0
 ```
+
+> **★ 烧写边界（spec §5.5.4）**：BOOT_QSPI.BIN 烧到 **offset 0**，其占用区段 = `[0, BOOT.bin 大小)`。SSBL 的 FS 数据段 = `[FS_START_SECTOR × 扇区大小, flash 末尾)`。两者不得重叠——烧写前用 Step 2 的尺寸校验确认。FS 永远不会写进 `[0, FS_START_SECTOR)` 这个 BOOT.bin 区段。
 
 - [ ] **Step 4：设 boot mode = QSPI，上电**
 

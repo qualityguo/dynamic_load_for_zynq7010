@@ -55,8 +55,7 @@ extern u32 FlashReadBaseAddress;
 
 static FIL fil;		/* File object */
 static FATFS fatfs;
-static char buffer[32];
-static char *boot_file = buffer;
+static char boot_file[32];
 
 /******************************************************************************/
 /******************************************************************************/
@@ -87,8 +86,7 @@ u32 InitSD(const char *filename)
 		return XST_FAILURE;
 	}
 
-	strcpy_rom(buffer, filename);
-	boot_file = (char *)buffer;
+	strcpy_rom(boot_file, filename);
 	FlashReadBaseAddress = XPAR_PS7_SD_0_S_AXI_BASEADDR;
 
 	rc = f_open(&fil, boot_file, FA_READ);
@@ -139,27 +137,6 @@ u32 SDAccess( u32 SourceAddress, u32 DestinationAddress, u32 LengthBytes)
 	return XST_SUCCESS;
 
 } /* End of SDAccess */
-
-
-/******************************************************************************/
-/**
-*
-* This function closes the file object
-*
-* @param	None
-*
-* @return	None.
-*
-* @note		None.
-*
-****************************************************************************/
-void ReleaseSD(void) {
-
-	f_close(&fil);
-	return;
-
-
-}
 #endif
 
 

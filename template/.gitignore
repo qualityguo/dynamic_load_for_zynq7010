@@ -1,0 +1,23 @@
+# vendor 拷贝产物（由 scripts/vendor_copy.{ps1,sh} 重建）
+external/
+
+# 构建产物
+**/Debug/
+**/Release/
+**/*.o
+**/*.elf
+**/*.bin
+**/*.map
+**/generated/
+
+# Vitis / XSCT 工程文件
+**/.metadata/
+**/RemoteSystemsTempFiles/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store
