@@ -27,6 +27,7 @@ extern int storage_fx_file_write(const void *buf, uint32_t len);
 extern int storage_fx_file_close(void);
 extern int storage_fx_file_size(const char *path, uint32_t *size);
 extern int storage_fx_file_create(const char *path);
+extern int storage_fx_file_truncate(uint32_t size);
 extern int storage_fx_file_delete(const char *path);
 extern int storage_fx_file_rename(const char *oldpath, const char *newpath);
 extern int storage_fx_dir_list(const char *path);
@@ -45,8 +46,9 @@ const storage_ops_t g_sd_storage = {
     .file_write  = storage_fx_file_write,
     .file_close  = storage_fx_file_close,
     .file_size   = storage_fx_file_size,
-    .file_create = storage_fx_file_create,
-    .file_delete = storage_fx_file_delete,
+    .file_create  = storage_fx_file_create,
+    .file_truncate = storage_fx_file_truncate,
+    .file_delete  = storage_fx_file_delete,
     .file_rename = storage_fx_file_rename,
     .dir_list    = storage_fx_dir_list,
 };

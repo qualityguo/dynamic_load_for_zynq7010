@@ -109,8 +109,18 @@ int storage_fx_file_delete(const char *path)
 
 int storage_fx_file_create(const char *path)
 {
+    /* 覆盖语义（spec §6.3 #6 原子写需要）：先删除可能残留的同名文件再创建。
+     * fx_file_delete 在文件不存在时返回 FX_NOT_FOUND，忽略即可。 */
+    fx_file_delete(&g_fx_media, (CHAR *)path);
     UINT status = fx_file_create(&g_fx_media, (CHAR *)path);
-    if (status == FX_ALREADY_CREATED) return STORAGE_ERR_EXISTS;
+    return (status == FX_SUCCESS) ? STORAGE_OK : STORAGE_ERR_IO;
+}
+
+int storage_fx_file_truncate(uint32_t size)
+{
+    /* fx_file_truncate 把当前打开文件截断到 size 字节（置 EOF，不释放簇）。
+     * 需先 file_open(WRITE)。对刚 create 的新文件 size 通常 = 0，调用安全。 */
+    UINT status = fx_file_truncate(&g_fx_file, (ULONG)size);
     return (status == FX_SUCCESS) ? STORAGE_OK : STORAGE_ERR_IO;
 }
 

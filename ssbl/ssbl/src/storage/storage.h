@@ -28,6 +28,7 @@ typedef struct {
     int  (*file_close)  (void);
     int  (*file_size)   (const char *path, uint32_t *size);
     int  (*file_create) (const char *path);
+    int  (*file_truncate)(uint32_t size);       /* 截断到 size 字节（spec §6.3 #6）*/
     int  (*file_delete) (const char *path);
     int  (*file_rename) (const char *oldpath, const char *newpath);
     int  (*dir_list)    (const char *path);
@@ -45,6 +46,7 @@ extern const storage_ops_t *g_storage;
 #define storage_file_close()        (g_storage->file_close())
 #define storage_file_size(p,s)      (g_storage->file_size(p,s))
 #define storage_file_create(p)      (g_storage->file_create(p))
+#define storage_file_truncate(s)    (g_storage->file_truncate(s))
 #define storage_file_delete(p)      (g_storage->file_delete(p))
 #define storage_file_rename(o,n)    (g_storage->file_rename(o,n))
 #define storage_dir_list(p)         (g_storage->dir_list(p))

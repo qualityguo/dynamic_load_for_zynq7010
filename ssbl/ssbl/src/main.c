@@ -1,5 +1,6 @@
 #include "xil_printf.h"
 #include "includes.h"
+#include "boot_selector.h"
 
 /*
 *********************************************************************************************************
@@ -7,15 +8,13 @@
 *********************************************************************************************************
 */
 #define  APP_CFG_TASK_START_PRIO                     	2u
-#define	 APP_CFG_TASK_LED_PRIO							20u					// LED闪烁任务
 
 /*
 *********************************************************************************************************
 *                                    任务栈大小，单位字节
 *********************************************************************************************************
 */
-#define  APP_CFG_TASK_START_STK_SIZE                    4096u
-#define	 APP_CFG_TASK_LED_STK_SIZE						1024u
+#define  APP_CFG_TASK_START_STK_SIZE                   8192u
 
 /*
 *********************************************************************************************************
@@ -24,8 +23,6 @@
 */
 static  TX_THREAD   AppTaskStartTCB;
 static  uint64_t    AppTaskStartStk[APP_CFG_TASK_START_STK_SIZE/8];
-static  TX_THREAD   AppTaskLEDTCB;
-static  uint64_t    AppTaskLEDStk[APP_CFG_TASK_LED_STK_SIZE/8];
 
 /*
 *********************************************************************************************************
@@ -33,25 +30,9 @@ static  uint64_t    AppTaskLEDStk[APP_CFG_TASK_LED_STK_SIZE/8];
 *********************************************************************************************************
 */
 static  void  AppTaskStart          (ULONG thread_input);
-static	void  AppTaskLED			(ULONG thread_input);
-static  void  AppTaskCreate 		(void);
-static  void  AppObjCreate 			(void);
 
-/* Phase 4：FileX/SD 存储层自测（storage_test.c），Phase 7 CLI 上线后移除 */
-extern  void  storage_test_create   (void);
-
-/*
-*******************************************************************************************************
-*                               		宏
-*******************************************************************************************************
-*/
-
-
-/*
-*******************************************************************************************************
-*                               		变量
-*******************************************************************************************************
-*/
+/* sd_port_init：pre-kernel 安全（只读 MBR + 注册 driver），main 里调 */
+extern  void  sd_port_init          (void);
 
 
 /*
@@ -72,7 +53,7 @@ int main()
 	/* sd_port_init 只读 MBR + 存指针 + 注册 driver，不碰 FileX/ThreadX API，
 	 * 可在 tx_kernel_enter 前调用。fx_system_initialize() 与 fx_media_open()
 	 * 都依赖 ThreadX（内部用 tx_mutex），必须在线程上下文里调——放在
-	 * storage_test 线程里，见 storage_test.c。 */
+	 * AppTaskStart 里（见下），pre-kernel 调会触发 Data Abort。 */
 	sd_port_init();
 
 	tx_kernel_enter();
@@ -90,6 +71,8 @@ int main()
 */
 void tx_application_define(void *first_unused_memory)
 {
+	(void)first_unused_memory;
+
 	/**************创建启动任务*********************/
 	tx_thread_create(&AppTaskStartTCB,              /* 任务控制块地址 */
 					   "App Task Start",              /* 任务名 */
@@ -101,101 +84,42 @@ void tx_application_define(void *first_unused_memory)
 					   APP_CFG_TASK_START_PRIO,        /* 任务抢占阀值 */
 					   TX_NO_TIME_SLICE,               /* 不开启时间片 */
 					   TX_AUTO_START);                 /* 创建后立即启动 */
-
-	/* Phase 4：创建 FileX/SD 存储层自测线程（临时，Phase 7 移除） */
-	storage_test_create();
 }
 
 /*
 *********************************************************************************************************
 *	函 数 名: AppTaskStart
-*	功能说明: 启动任务。
+*	功能说明: 启动任务 = boot_selector 驱动线程。
+*	           在线程上下文初始化 FileX + 挂载 P2，然后读 boot.cfg → 加载 app/bit
+*	           → 跳转。成功路径不返回（已 jump_to_app）。
 *	形    参: thread_input 是在创建该任务时传递的形参
-*	返 回 值: 无
-	优 先 级: 2
+*	优 先 级: 2
 *********************************************************************************************************
 */
 static  void  AppTaskStart (ULONG thread_input)
 {
 	(void)thread_input;
+	int rc;
 
-	/* 先挂起定时器组 */
-#ifndef TX_NO_TIMER
-	tx_thread_suspend(&_tx_timer_thread);
-#endif
+	/* fx_system_initialize / fx_media_open 必须在线程上下文调用（内部用 tx_mutex），
+	 * pre-kernel 调用会让该锁半初始化，后续 fx_media_open 触发 Data Abort。
+	 * Phase 4 起从 main 移到此处。 */
+	fx_system_initialize();
 
-	/* 恢复定时器组 */
-#ifndef TX_NO_TIMER
-	tx_thread_resume(&_tx_timer_thread);
-#endif
-
-	/* 创建任务 */
-    AppTaskCreate();
-
-	/* 创建任务间通信机制 */
-	AppObjCreate();
-
-	/* 结束自身 */
-	tx_thread_terminate(&AppTaskStartTCB);
-}
-
-/*
-*********************************************************************************************************
-*	函 数 名: AppTaskLED
-*	功能说明: LED闪烁
-*	形    参: thread_input 是在创建该任务时传递的形参
-*	返 回 值: 无
-	优 先 级: 20
-*********************************************************************************************************
-*/
-static  void  AppTaskLED          (ULONG thread_input)
-{
-	(void)thread_input;
-	struct device *pled0 = device_find("led0");
-	uint8_t val = 1;
-
-
-	while(1)
-	{
-		device_write(pled0, &val, 1);
-		val = (val==1)? 0 : 1;
-		/* 延时2s */
-		tx_thread_sleep(200);
+	rc = storage_media_open();
+	if (rc != STORAGE_OK) {
+		xil_printf("[SSBL] storage_media_open failed (%d), entering idle\r\n", rc);
+		tx_thread_suspend(tx_thread_identify());
 	}
+	xil_printf("[SSBL] storage media opened (P2)\r\n");
+
+	/* 读 boot.cfg → 加载 app (+bit) → 跳转。成功不返回。 */
+	rc = boot_selector_run();
+
+	/* 走到这里说明 boot 失败（cfg 严重错误 / app 不存在 / CRC 错等，spec §5.3）。
+	 * Phase 6 先 idle；Phase 7 起此处改为进 CLI。 */
+	xil_printf("[SSBL] boot_selector failed (%d), entering idle\r\n", rc);
+	tx_thread_suspend(tx_thread_identify());
 }
 
-/*
-*********************************************************************************************************
-*	函 数 名: AppTaskCreate
-*	功能说明: 创建应用任务
-*	形    参: 无
-*	返 回 值: 无
-*********************************************************************************************************
-*/
-static  void  AppTaskCreate (void)
-{
-	/**************创建LED闪烁任务*********************/
-	tx_thread_create(&AppTaskLEDTCB,	              	/* 任务控制块地址 */
-					  "App Task LED",		            /* 任务名 */
-					  AppTaskLED,                 		/* 启动任务函数地址 */
-					  0,                             	/* 传递给任务的参数 */
-					  &AppTaskLEDStk[0],		        /* 堆栈基地址 */
-					  APP_CFG_TASK_LED_STK_SIZE, 		/* 堆栈空间大小 */
-					  APP_CFG_TASK_LED_PRIO,     		/* 任务优先级*/
-					  APP_CFG_TASK_LED_PRIO,    	 	/* 任务抢占阀值 */
-					  TX_NO_TIME_SLICE,               	/* 不开启时间片 */
-					  TX_AUTO_START);                 	/* 创建后立即启动 */
-}
-
-/*
-*********************************************************************************************************
-*	函 数 名: AppObjCreate
-*	功能说明: 创建任务通讯
-*	形    参: 无
-*	返 回 值: 无
-*********************************************************************************************************
-*/
-static  void  AppObjCreate (void)
-{
-
-}
+/***************************** (END OF FILE) *********************************/

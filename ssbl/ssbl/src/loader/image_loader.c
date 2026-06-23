@@ -91,8 +91,8 @@ int image_loader_load(const char *path, uint32_t *out_load_addr)
                path, (unsigned)hdr.load_addr, (unsigned)hdr.image_size);
 
     /* 把 payload 流式拷到 DDR load_addr。
-     * chunk 用 static 而非栈：本函数由 storage_test_thread（仅 4KB 栈）调用，
-     * 4KB 的栈上缓冲会直接撑爆线程栈触发 Data Abort，故改静态。单线程、无重入，安全。*/
+     * chunk 用 static 而非栈：调用链 boot_selector_run → image_loader_load 运行在
+     * AppTaskStart（8KB 栈）上，4KB 栈上缓冲风险大，故改静态。单线程、无重入，安全。*/
     uint8_t  *dst       = (uint8_t *)hdr.load_addr;
     uint32_t  remaining = hdr.image_size;
     static uint8_t chunk[CHUNK_SIZE];
