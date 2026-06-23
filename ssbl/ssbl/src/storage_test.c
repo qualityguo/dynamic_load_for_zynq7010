@@ -17,9 +17,15 @@
 
 #include "includes.h"
 #include "storage.h"
+#include "image_header.h"
+#include "handoff.h"
 
 #define STORAGE_TEST_PRIO       15u
-#define STORAGE_TEST_STK_SIZE   4096u
+#define STORAGE_TEST_STK_SIZE   16384u
+
+/* Phase 5（Task 5.7）：自测后加载并跳转的 app 镜像名（位于 P2 数据分区根目录）。
+ * 由 pack_app.py 打包后拷到 SD 卡 P2。Phase 6 起 app 名由 boot.cfg 决定。 */
+#define SSBL_APP_PATH           "app_current.bin"
 
 /* round-trip 自测用的临时文件名（带前后缀，避免与真实文件冲突） */
 #define STORAGE_TEST_FILE       "__stor_test__.bin"
@@ -178,7 +184,24 @@ static void storage_test_thread(ULONG thread_input)
     xil_printf("[stor_test] ===== done: %d passed, %d failed =====\r\n",
                g_pass, g_fail);
 
-    /* 自测完挂起自身，不占调度 */
+    /* Phase 5（Task 5.7）：自测通过后加载 app.bin 并跳转到 app，端到端验证
+     * SSBL → app handoff。Phase 6 会用真正的 boot_selector（读 boot.cfg 选 app）
+     * 替代这段临时 load+jump。app 落在 SD 卡 P2 数据分区（spec §5.5）。 */
+    {
+        extern int image_loader_load(const char *path, uint32_t *out_load_addr);
+        extern void jump_to_app(uint32_t app_load_addr);
+        uint32_t load_addr = 0;
+        int rc2 = image_loader_load(SSBL_APP_PATH, &load_addr);
+        if (rc2 == STORAGE_OK) {
+            xil_printf("[SSBL] handoff to app @0x%08X\r\n", (unsigned)load_addr);
+            jump_to_app(load_addr);    /* 不返回 */
+        } else {
+            xil_printf("[SSBL] load %s failed (%d), staying in SSBL\r\n",
+                       SSBL_APP_PATH, rc2);
+        }
+    }
+
+    /* load 失败才走到这里：挂起自身，不占调度 */
     tx_thread_suspend(tx_thread_identify());
 }
 
