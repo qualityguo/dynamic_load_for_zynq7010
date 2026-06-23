@@ -54,10 +54,17 @@ extern void handoff_exit(uint32_t entry_addr) __attribute__((noreturn));
 */
 void jump_to_app(uint32_t app_load_addr)
 {
-    /* 1. 停 ThreadX 业务线程（Phase 7 线程未定义时为 NULL，自动跳过）*/
-    if (cli_thread)       tx_thread_terminate(cli_thread);
-    if (countdown_thread) tx_thread_terminate(countdown_thread);
-    if (trigger_thread)   tx_thread_terminate(trigger_thread);
+    /* 1. 停 ThreadX 业务线程。不能 terminate 当前线程（自身）：
+     *    tx_thread_terminate 对 TX_READY 的线程会调 _tx_thread_system_suspend
+     *    让调度器切走且永不返回，导致后面的 GIC/Timer 清理和 handoff_exit
+     *    全部无法执行。跳转后 app 完全接管 DDR，原线程内存不再使用，跳过即可。*/
+    TX_THREAD *self = tx_thread_identify();
+    if (cli_thread && cli_thread != self)
+        tx_thread_terminate(cli_thread);
+    if (countdown_thread && countdown_thread != self)
+        tx_thread_terminate(countdown_thread);
+    if (trigger_thread && trigger_thread != self)
+        tx_thread_terminate(trigger_thread);
 
     /* 2. 让调度器跑一轮，确保终止生效 */
     tx_thread_relinquish();
