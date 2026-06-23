@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="ASCII"?>
+<sdkproject:SdkProject xmi:version="2.0" xmlns:xmi="http://www.omg.org/XMI" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:sdkproject="http://www.xilinx.com/sdkproject" name="FileX_A9" location="D:/RTOS_Study/ssbl/ssbl/FileX_A9" platform="D:/RTOS_Study/ssbl/ssbl/zynq7010/export/zynq7010/zynq7010.xpfm" platformUID="xilinx:::0.0(custom)" systemProject="FileX_A9_system" sysConfig="zynq7010" runtime="C/C++" cpu="standalone_domain" cpuInstance="ps7_cortexa9_0" os="standalone" isStaticLib="true" mssSignature="cc39503ab1a906d27ca76942586b73ee">
+  <configuration name="Debug" id="xilinx.gnu.armv7.staticlib.debug.453885313">
+    <configBuildOptions xsi:type="sdkproject:SdkOptions"/>
+    <lastBuildOptions xsi:type="sdkproject:SdkOptions"/>
+  </configuration>
+  <configuration name="Release" id="xilinx.gnu.armv7.staticlib.release.870045015" dirty="true">
+    <configBuildOptions xsi:type="sdkproject:SdkOptions"/>
+  </configuration>
+  <template appTemplateName="empty_application"/>
+</sdkproject:SdkProject>

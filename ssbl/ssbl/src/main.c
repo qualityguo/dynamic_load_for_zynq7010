@@ -37,6 +37,9 @@ static	void  AppTaskLED			(ULONG thread_input);
 static  void  AppTaskCreate 		(void);
 static  void  AppObjCreate 			(void);
 
+/* Phase 4：FileX/SD 存储层自测（storage_test.c），Phase 7 CLI 上线后移除 */
+extern  void  storage_test_create   (void);
+
 /*
 *******************************************************************************************************
 *                               		宏
@@ -66,6 +69,12 @@ int main()
 	bsp_init();
 	board_init();
 
+	/* sd_port_init 只读 MBR + 存指针 + 注册 driver，不碰 FileX/ThreadX API，
+	 * 可在 tx_kernel_enter 前调用。fx_system_initialize() 与 fx_media_open()
+	 * 都依赖 ThreadX（内部用 tx_mutex），必须在线程上下文里调——放在
+	 * storage_test 线程里，见 storage_test.c。 */
+	sd_port_init();
+
 	tx_kernel_enter();
 
 	while(1);
@@ -92,6 +101,9 @@ void tx_application_define(void *first_unused_memory)
 					   APP_CFG_TASK_START_PRIO,        /* 任务抢占阀值 */
 					   TX_NO_TIME_SLICE,               /* 不开启时间片 */
 					   TX_AUTO_START);                 /* 创建后立即启动 */
+
+	/* Phase 4：创建 FileX/SD 存储层自测线程（临时，Phase 7 移除） */
+	storage_test_create();
 }
 
 /*

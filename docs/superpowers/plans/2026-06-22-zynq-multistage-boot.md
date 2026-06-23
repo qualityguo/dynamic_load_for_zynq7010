@@ -1129,7 +1129,7 @@ git commit --allow-empty -m "Phase 3.4: FSBL→SSBL chain verified on hardware"
 
 **Spec 引用**：§11.1（接口设计）、§11.2 阶段 A、**§5.5 存储隔离原则**。
 
-> **★ 关键约束（spec §5.5）**：SD 卡必须先格式化为**双 FAT32 分区**——P1（8MB）仅放 BOOT.BIN、P2（剩余）放数据。SSBL 的 `fx_media_open` **只挂载 P2**，绝不覆盖 P1，从而把升级写入与 BOOT.bin 簇链物理隔离。本 Phase 的 Task 4.0 先完成双分区格式化，后续 Task 在此基础上挂载 P2。
+> **★ 关键约束（spec §5.5）**：SD 卡必须先格式化为**双 FAT32 分区**——P1（100MB）仅放 BOOT.BIN、P2（剩余）放数据。SSBL 的 `fx_media_open` **只挂载 P2**，绝不覆盖 P1，从而把升级写入与 BOOT.bin 簇链物理隔离。本 Phase 的 Task 4.0 先完成双分区格式化，后续 Task 在此基础上挂载 P2。
 
 ### Task 4.0：格式化 SD 卡为双 FAT32 分区（前置，spec §5.5.3）
 
@@ -1147,7 +1147,7 @@ git commit --allow-empty -m "Phase 3.4: FSBL→SSBL chain verified on hardware"
 #   例：pwsh format_sd_card.ps1 E      # 盘符 E:
 #       pwsh format_sd_card.ps1 2      # 磁盘号 2（diskpart list disk 确认）
 #
-# 产物：P1=8MB FAT32（仅 BOOT.BIN），P2=剩余 FAT32（数据）
+# 产物：P1=100MB FAT32（仅 BOOT.BIN），P2=剩余 FAT32（数据）
 # 危险：会清空目标盘所有数据！运行前务必用 diskpart list disk 确认盘号。
 
 $ErrorActionPreference = "Stop"
@@ -1158,12 +1158,12 @@ if ($args.Count -lt 1) {
 $target = $args[0]
 
 # 生成 diskpart 脚本（按磁盘号清理 + 双分区）
-# P1: size=8192 (8MB) FAT32，标记 bootable（BootROM 要求首个 FAT 分区）
+# P1: size=102400 (100MB) FAT32，标记 bootable（BootROM 要求首个 FAT 分区）
 # P2: 剩余空间 FAT32
 $dpScript = @"
 select disk $target
 clean
-create partition primary size=8192
+create partition primary size=102400
 format quick fs=fat32 label=P1_BOOT
 active
 create partition primary
@@ -1171,7 +1171,7 @@ format quick fs=fat32 label=P2_DATA
 exit
 "@
 $dpScript | diskpart
-Write-Host "双分区完成：P1=8MB(P1_BOOT) / P2=剩余(P2_DATA)"
+Write-Host "双分区完成：P1=100MB(P1_BOOT) / P2=剩余(P2_DATA)"
 Write-Host "下一步：把 BOOT.BIN 拷到 P1，其余文件放 P2"
 ```
 
@@ -1187,17 +1187,17 @@ set -euo pipefail
 DEV="${1:?用法: $0 /dev/sdX}"
 # 卸载可能挂载的分区
 umount "${DEV}"* 2>/dev/null || true
-# 清空分区表 + 双分区：P1=8MB bootable, P2=剩余
+# 清空分区表 + 双分区：P1=100MB bootable, P2=剩余
 # 用 sfdisk 脚本化（label: dos）
 sfdisk "$DEV" <<EOF
 label: dos
-,8192M,b,*
+,102400M,b,*
 ,,b,
 EOF
 # 格式化
 mkfs.fat -F32 -n P1_BOOT "${DEV}1"
 mkfs.fat -F32 -n P2_DATA "${DEV}2"
-echo "双分区完成：P1=8MB(P1_BOOT) / P2=剩余(P2_DATA)"
+echo "双分区完成：P1=100MB(P1_BOOT) / P2=剩余(P2_DATA)"
 ```
 
 - [ ] **Step 3：写 README_sd_format.md（操作说明 + 验证）**
@@ -1218,7 +1218,7 @@ P1 只放 BOOT.BIN（烧录后只读），P2 放所有可变数据（app/bit/cfg
 2. 运行：
    - Windows: `pwsh scripts\format_sd_card.ps1 <盘号>`
    - Linux:   `sudo ./scripts/format_sd_card.sh /dev/sdX`
-3. 验证：资源管理器应出现两个盘符（P1_BOOT ~8MB, P2_DATA 剩余）
+3. 验证：资源管理器应出现两个盘符（P1_BOOT ~100MB, P2_DATA 剩余）
 4. 把 `BOOT.BIN` 拷到 **P1**（仅此一个文件）
 5. 其余文件（app/bit/cfg）拷到 **P2**
 
@@ -1238,7 +1238,7 @@ diskpart
 pwsh scripts\format_sd_card.ps1 2
 ```
 
-期望：完成后资源管理器出现两个盘符 P1_BOOT（~8MB）、P2_DATA（剩余）。
+期望：完成后资源管理器出现两个盘符 P1_BOOT（~100MB）、P2_DATA（剩余）。
 
 - [ ] **Step 5：拷贝 BOOT.BIN 到 P1 验证 BootROM 能启动**
 
