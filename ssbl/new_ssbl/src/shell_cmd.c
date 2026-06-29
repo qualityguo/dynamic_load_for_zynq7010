@@ -381,12 +381,194 @@ int cmd_reset(int argc, char *argv[])
 #undef SLCR_PSS_RST_CTRL
 }
 
-/* ============================== ymodem (stub) ============================== */
+/* ============================== ymodem ============================== */
+
+#define YM_DDR_BASE      0x02000000u
+#define YM_DDR_MAX_SZ    (8u * 1024u * 1024u)			/* 8 MB */
+
+/* YMODEM 接收状态 */
+static struct {
+	uint32_t offset;					/* 已写入DDR的字节数 */
+	uint32_t total;						/* 包0声明的文件大小 */
+	char     filename[256];				/* 包0携带的文件名 */
+	int      loaded;					/* 1=数据在DDR中, 可save */
+} g_ym_recv;
+
+/* ---- YMODEM 回调函数 ---- */
+
+/* 包0到达: 解析文件名和大小, 初始化接收状态 */
+static enum ym_code ym_cb_begin(struct ym_ctx *ctx, uint8_t *buf, uint32_t len)
+{
+	uint32_t i;
+
+	(void)ctx;
+
+	/* Block0 payload 格式: "filename\0 filesize_decimal\0 padding..." */
+	i = 0;
+	while (i < len && i < sizeof(g_ym_recv.filename) - 1 && buf[i] != '\0')
+		i++;
+	memcpy(g_ym_recv.filename, buf, i);
+	g_ym_recv.filename[i] = '\0';
+
+	/* 文件大小在 filename\0 之后 */
+	g_ym_recv.total = 0;
+	if (i + 1 < len)
+		g_ym_recv.total = (uint32_t)atoi((const char *)(buf + i + 1));
+
+	g_ym_recv.offset = 0;
+	g_ym_recv.loaded = 0;
+
+	xil_printf("YMODEM: receiving '%s' (%u bytes)...\r\n",
+			   g_ym_recv.filename, (unsigned)g_ym_recv.total);
+
+	return YM_CODE_ACK;
+}
+
+/* 数据包到达: 拷贝到DDR暂存区 */
+static enum ym_code ym_cb_data(struct ym_ctx *ctx, uint8_t *buf, uint32_t len)
+{
+	(void)ctx;
+
+	if (g_ym_recv.offset + len > YM_DDR_MAX_SZ) {
+		xil_printf("YMODEM: buffer overflow! offset=%u len=%u\r\n",
+				   (unsigned)g_ym_recv.offset, (unsigned)len);
+		return YM_CODE_CAN;
+	}
+
+	memcpy((void *)(YM_DDR_BASE + g_ym_recv.offset), buf, len);
+	g_ym_recv.offset += len;
+
+	return YM_CODE_ACK;
+}
+
+/* 传输结束: 标记已加载 */
+static enum ym_code ym_cb_end(struct ym_ctx *ctx, uint8_t *buf, uint32_t len)
+{
+	(void)ctx;
+	(void)buf;
+	(void)len;
+
+	g_ym_recv.loaded = 1;
+	xil_printf("YMODEM: received %u bytes\r\n", (unsigned)g_ym_recv.offset);
+
+	return YM_CODE_ACK;
+}
+
+/* ---- shell 命令处理 ---- */
+
 int cmd_ymodem(int argc, char *argv[])
 {
-    (void)argc; (void)argv;
-    xil_printf("ymodem: not implemented yet\r\n");
-    return 0;
+	if (argc < 2) {
+		xil_printf("usage:\r\n");
+		xil_printf("  ym load    - receive file via YMODEM to DDR\r\n");
+		xil_printf("  ym save    - save received file to storage\r\n");
+		return -1;
+	}
+
+	/* ym load: 启动YMODEM接收, 数据暂存到DDR */
+	if (name_eq_ci(argv[1], "load")) {
+		struct UART_Device *dev;
+		struct ym_ctx ctx;
+		int err;
+
+		dev = Get_UART_Device((char *)"zynq_uart1");
+		if (dev == NULL) {
+			xil_printf("ym load: UART device not found\r\n");
+			return -1;
+		}
+
+		g_ym_recv.offset    = 0;
+		g_ym_recv.total     = 0;
+		g_ym_recv.loaded    = 0;
+		g_ym_recv.filename[0] = '\0';
+
+		xil_printf("ym load: waiting for YMODEM transfer (CRC mode)...\r\n");
+
+		err = ymodem_recv_on_uart(&ctx, dev,
+								  ym_cb_begin, ym_cb_data, ym_cb_end, 60);
+		if (err != 0) {
+			xil_printf("ym load: failed (err=0x%X)\r\n", (unsigned)(-err));
+			return err;
+		}
+
+		xil_printf("ym load: OK, '%s' in DDR @ 0x%08X (%u bytes)\r\n",
+				   g_ym_recv.filename, (unsigned)YM_DDR_BASE,
+				   (unsigned)g_ym_recv.offset);
+		return 0;
+	}
+
+	/* ym save: 将DDR暂存数据写入存储介质文件 */
+	if (name_eq_ci(argv[1], "save")) {
+		UINT status;
+
+		if (!g_ym_recv.loaded) {
+			xil_printf("ym save: no file loaded, run 'ym load' first\r\n");
+			return -1;
+		}
+		if (g_ym_recv.offset == 0) {
+			xil_printf("ym save: nothing to save\r\n");
+			return -1;
+		}
+
+		/* 检查存储空间是否足够 */
+		{
+			ULONG free_bytes = 0;
+			status = fx_media_space_available(&g_fx_media, &free_bytes);
+			if (status != FX_SUCCESS) {
+				xil_printf("ym save: cannot query free space (0x%X)\r\n", (unsigned)status);
+				return -1;
+			}
+			if (g_ym_recv.offset > free_bytes) {
+				xil_printf("ym save: file too large! (%u bytes > %u bytes free)\r\n",
+						   (unsigned)g_ym_recv.offset, (unsigned)free_bytes);
+				return -1;
+			}
+			xil_printf("ym save: writing %u bytes (%u bytes free)\r\n",
+					   (unsigned)g_ym_recv.offset, (unsigned)free_bytes);
+		}
+
+		/* 若文件已存在则先删除 */
+		fx_file_delete(&g_fx_media, g_ym_recv.filename);
+
+		/* 创建并打开文件 */
+		status = fx_file_create(&g_fx_media, g_ym_recv.filename);
+		if (status != FX_SUCCESS) {
+			xil_printf("ym save: fx_file_create failed (0x%X)\r\n", (unsigned)status);
+			return -1;
+		}
+		status = fx_file_open(&g_fx_media, &s_file,
+							  g_ym_recv.filename, FX_OPEN_FOR_WRITE);
+		if (status != FX_SUCCESS) {
+			xil_printf("ym save: fx_file_open failed (0x%X)\r\n", (unsigned)status);
+			return -1;
+		}
+
+		/* 写入DDR暂存区的全部数据 */
+		status = fx_file_write(&s_file, (void *)YM_DDR_BASE, g_ym_recv.offset);
+		if (status != FX_SUCCESS) {
+			xil_printf("ym save: fx_file_write failed (0x%X)\r\n", (unsigned)status);
+			fx_file_close(&s_file);
+			return -1;
+		}
+
+		status = fx_file_close(&s_file);
+		if (status != FX_SUCCESS) {
+			xil_printf("ym save: fx_file_close failed (0x%X)\r\n", (unsigned)status);
+			return -1;
+		}
+
+		fx_media_flush(&g_fx_media);
+
+		xil_printf("ym save: wrote %u bytes to '%s'\r\n",
+				   (unsigned)g_ym_recv.offset, g_ym_recv.filename);
+
+		g_ym_recv.loaded = 0;
+		return 0;
+	}
+
+	xil_printf("ym: unknown subcommand '%s'\r\n", argv[1]);
+	xil_printf("usage: ym load | ym save\r\n");
+	return -1;
 }
 
 
@@ -402,7 +584,7 @@ SHELL_EXPORT_CMD(boot,   cmd_boot,   boot [app] [bit]);
 SHELL_EXPORT_CMD(mem,    cmd_mem,    mem <addr> [n]);
 SHELL_EXPORT_CMD(test,   cmd_test,   test app|bitstream <file>);
 SHELL_EXPORT_CMD(reset,  cmd_reset,  soft reset);
-SHELL_EXPORT_CMD(ymodem, cmd_ymodem, ymodem rx <file>);
+SHELL_EXPORT_CMD(ym,     cmd_ymodem, ym load | ym save);
 
 
 /* ============================== 测试变量 ============================== */

@@ -32,6 +32,7 @@
 #include "boot_config.h"
 #include "boot_run.h"
 #include "handoff.h"
+#include "ymodem.h"
 
 #include "fx_zynq_sdio_driver.h"
 #include "fx_zynq_qspi_driver.h"
