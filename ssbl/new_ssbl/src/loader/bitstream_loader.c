@@ -28,6 +28,9 @@
 #include "bitstream_loader.h"
 #include <string.h>
 
+/* xil_cache.c 中有实现但 xil_cache.h 未声明（BSP 版本差异），见 handoff.c */
+extern void Xil_L2CacheFlush(void);
+
 /* FileX 全局介质（boot_config.c 定义）*/
 extern FX_MEDIA  g_fx_media;
 
@@ -241,8 +244,9 @@ bit_err_t bitstream_program(uint8_t *buf, uint32_t len)
 	/* 5. 字节反序（big-endian .bit → devcfg DMA 小端）。*/
 	swap_words((uint32_t *)(void *)buf, words);
 
-	/* 6. clean D-cache：确保反序后的 DDR 与 PCAP DMA 一致。*/
+	/* 6. clean D-cache：确保反序后的 DDR 与 PCAP DMA 一致（L1+L2 全部 flush）。*/
 	Xil_DCacheFlush();
+	Xil_L2CacheFlush();
 
 	/* 7. Fabric：PCAP_MODE/PCAP_PR + PROG_B 脉冲 + 等 INIT 就绪。*/
 	{
@@ -314,12 +318,12 @@ bit_err_t bitstream_load_file(const char *path, uint32_t *out_size)
 		}
 		want = BITSTREAM_DDR_SIZE - total;
 		status = fx_file_read(&s_fx_file, dst + total, want, &br);
-		if (status != FX_SUCCESS) {
+		if (status != FX_SUCCESS && status != FX_END_OF_FILE) {
 			ssbl_printf(LOG_ERR, "fx_file_read error (0x%08X)\r\n", (unsigned)status);
 			fx_file_close(&s_fx_file);
 			return BIT_ERR_IO;
 		}
-		if (br == 0u) break;                /* EOF */
+		if (br == 0u) break;                /* EOF: FileX 以 FX_END_OF_FILE 通知，actual=0 */
 		total += (uint32_t)br;
 	}
 	fx_file_close(&s_fx_file);

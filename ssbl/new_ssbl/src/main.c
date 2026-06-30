@@ -205,18 +205,18 @@ static  void  AppFileXInit			(void)
 		default:
 			ssbl_printf(LOG_ERR, "Unsupported boot mode: 0x%.4lx\r\n", g_boot_mode);
 			// 回退到SD卡版本
-			status =  fx_media_open(&g_fx_media, "SDIO", fx_zynq_sd_driver, 0, media_memory, sizeof(media_memory));
-			if (status != FX_SUCCESS)
-			{
-				ssbl_printf(LOG_ERR, "fx_media_open error.\r\n");
-			}
-			ssbl_printf(LOG_INFO, "fx_media_open sdio.\r\n");
+//			status =  fx_media_open(&g_fx_media, "SDIO", fx_zynq_sd_driver, 0, media_memory, sizeof(media_memory));
+//			if (status != FX_SUCCESS)
+//			{
+//				ssbl_printf(LOG_ERR, "fx_media_open error.\r\n");
+//			}
+//			ssbl_printf(LOG_INFO, "fx_media_open sdio.\r\n");
 			break;
 	}
 
 	/* 读取boot.cfg */
-	boot_config_load(&g_runtime_cfg);
-	ssbl_printf(LOG_INFO, "read boot.cfg\r\n");
+	if(boot_config_load(&g_runtime_cfg) == 0)
+		ssbl_printf(LOG_INFO, "read boot.cfg\r\n");
 
 }
 

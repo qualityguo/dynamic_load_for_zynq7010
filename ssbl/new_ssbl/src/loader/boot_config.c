@@ -5,6 +5,7 @@
 /************************** Constant Definitions *****************************/
 #define BOOT_CFG_PATH        "boot.cfg"
 #define BOOT_CFG_TMP_PATH    "boot.cfg.tmp"
+#define BOOT_CFG_BAK_PATH    "boot.cfg.bak"
 #define BOOT_CFG_MAX_BYTES   2048
 #define BOOT_CFG_LINE_MAX    256
 
@@ -26,8 +27,12 @@ int	boot_config_load(boot_cfg_t *cfg)
 	memset(cfg, 0x00, sizeof(*cfg));
 	memset(fx_buf, 0x00, BOOT_CFG_MAX_BYTES);
 
-	// 2. 打开配置文件
+	// 2. 打开配置文件（优先 boot.cfg；缺失则回退 .bak，应对写入时掉电）
 	status = fx_file_open(&g_fx_media, &g_fx_file, BOOT_CFG_PATH, FX_OPEN_FOR_READ);
+	if (status != FX_SUCCESS)
+	{
+		status = fx_file_open(&g_fx_media, &g_fx_file, BOOT_CFG_BAK_PATH, FX_OPEN_FOR_READ);
+	}
 	if (status != FX_SUCCESS)
 	{
 		ssbl_printf(LOG_ERR, "fx_file_open error!\r\n");
@@ -39,15 +44,17 @@ int	boot_config_load(boot_cfg_t *cfg)
 	if (status != FX_SUCCESS)
 	{
 		ssbl_printf(LOG_ERR, "fx_file_seek error!\r\n");
+		fx_file_close(&g_fx_file);
 		return -1;
 	}
 
-	// 4. 读取配置文件
-	status = fx_file_read(&g_fx_file, fx_buf, BOOT_CFG_MAX_BYTES, &bw);
+	// 4. 读取配置文件（预留 1 字节给 '\0'，避免越界）
+	status = fx_file_read(&g_fx_file, fx_buf, BOOT_CFG_MAX_BYTES - 1, &bw);
 	ssbl_printf(LOG_INFO, "fx_file_read len = %d\r\n", bw);
 	if (status != FX_SUCCESS)
 	{
 		ssbl_printf(LOG_ERR, "fx_file_read error!\r\n");
+		fx_file_close(&g_fx_file);
 		return -1;
 	}
 
@@ -92,64 +99,74 @@ int boot_config_save(boot_cfg_t *cfg)
 		return -1;
 	}
 
-	// 3. 写.tmp
-	status =  fx_file_create(&g_fx_media, BOOT_CFG_TMP_PATH);
+	/* 3. 写 .tmp（先写临时文件，保证目标 boot.cfg 始终完整） */
+	status = fx_file_create(&g_fx_media, BOOT_CFG_TMP_PATH);
 	if (status != FX_SUCCESS)
 	{
-		ssbl_printf(LOG_ERR, "fx_file_create error!\r\n");
-		// 如果是因为存在.tmp文件导致创建失败，则删除并重试一次
-		status = fx_file_delete(&g_fx_media, BOOT_CFG_PATH);
+		/* 残留 .tmp 会导致 create 失败，删除后重试一次 */
+		fx_file_delete(&g_fx_media, BOOT_CFG_TMP_PATH);
+		status = fx_file_create(&g_fx_media, BOOT_CFG_TMP_PATH);
 		if (status != FX_SUCCESS)
 		{
-			ssbl_printf(LOG_ERR, "fx_file_delete error!\r\n");		// 允许删除失败
-		}
-		status =  fx_file_create(&g_fx_media, BOOT_CFG_TMP_PATH);
-		if (status != FX_SUCCESS)
-		{
-			ssbl_printf(LOG_ERR, "fx_file_create retry error!\r\n");
+			ssbl_printf(LOG_ERR, "fx_file_create tmp error!\r\n");
 			return -1;
 		}
 	}
 	status = fx_file_open(&g_fx_media, &g_fx_file, BOOT_CFG_TMP_PATH, FX_OPEN_FOR_WRITE);
 	if (status != FX_SUCCESS)
 	{
-		ssbl_printf(LOG_ERR, "fx_file_open error!\r\n");
+		ssbl_printf(LOG_ERR, "fx_file_open tmp error!\r\n");
+		fx_file_delete(&g_fx_media, BOOT_CFG_TMP_PATH);
 		return -1;
 	}
-	status =  fx_file_write(&g_fx_file, fx_buf, len);
+	status = fx_file_write(&g_fx_file, fx_buf, len);
 	if (status != FX_SUCCESS)
 	{
 		ssbl_printf(LOG_ERR, "fx_file_write error!\r\n");
+		fx_file_close(&g_fx_file);
+		fx_file_delete(&g_fx_media, BOOT_CFG_TMP_PATH);
 		return -1;
 	}
 	status = fx_file_close(&g_fx_file);
 	if (status != FX_SUCCESS)
 	{
 		ssbl_printf(LOG_ERR, "fx_file_close error!\r\n");
+		fx_file_delete(&g_fx_media, BOOT_CFG_TMP_PATH);
+		return -1;
+	}
+	/* flush 确保 .tmp 数据落盘后再提交，避免掉电后 .tmp 不完整 */
+	status = fx_media_flush(&g_fx_media);
+	if (status != FX_SUCCESS)
+	{
+		ssbl_printf(LOG_ERR, "fx_media_flush error!\r\n");
+		fx_file_delete(&g_fx_media, BOOT_CFG_TMP_PATH);
 		return -1;
 	}
 
-	// 4. 删除重命名
-	status = fx_file_delete(&g_fx_media, BOOT_CFG_PATH);
-	if (status != FX_SUCCESS)
-	{
-		ssbl_printf(LOG_ERR, "fx_file_delete error!\r\n");		// 允许删除失败
-	}
+	/*
+	 * 4. 原子提交：旧 cfg → .bak，再 .tmp → cfg。
+	 *    任意时刻掉电，load 都能从 cfg 或 .bak 恢复一份完整配置：
+	 *      - rename(cfg→bak) 后掉电：cfg 缺失但有 .bak，load 回退 .bak；
+	 *      - rename(tmp→cfg) 后掉电：cfg=新内容、.bak=旧内容，均完整。
+	 */
+	(void)fx_file_delete(&g_fx_media, BOOT_CFG_BAK_PATH);                 /* 清理上次 .bak（不存在则忽略） */
+	(void)fx_file_rename(&g_fx_media, BOOT_CFG_PATH, BOOT_CFG_BAK_PATH);  /* 旧 cfg→bak；首次保存时 cfg 不存在则忽略 */
 	status = fx_file_rename(&g_fx_media, BOOT_CFG_TMP_PATH, BOOT_CFG_PATH);
 	if (status != FX_SUCCESS)
 	{
-		ssbl_printf(LOG_ERR, "fx_file_rename error!\r\n");
-		// 重命名失败直接删除tmp文件
-		status = fx_file_delete(&g_fx_media, BOOT_CFG_TMP_PATH);
-		if (status != FX_SUCCESS)
-		{
-			ssbl_printf(LOG_ERR, "fx_file_delete error!\r\n");		// 允许删除失败
-		}
+		ssbl_printf(LOG_ERR, "fx_file_rename tmp->cfg error!\r\n");
+		fx_file_delete(&g_fx_media, BOOT_CFG_TMP_PATH);
+		return -1;
+	}
+
+	status = fx_media_flush(&g_fx_media);
+	if (status != FX_SUCCESS)
+	{
+		ssbl_printf(LOG_ERR, "fx_media_flush (after rename) error!\r\n");
 		return -1;
 	}
 
 	return 0;
-
 }
 
 
@@ -158,7 +175,10 @@ static void parse_text(boot_cfg_t *cfg, char *buf, uint32_t len)
 	char line[BOOT_CFG_LINE_MAX];
 	uint32_t i = 0, line_start = 0;
 
-	while(i < len)
+	/* 遍历到 i==len：把文件末尾当作一个虚拟的 '\n'，
+	 * 否则最后一行若无尾随换行会被漏解析（auto_boot 等末行丢失）。
+	 * 三元 (i < len) ? buf[i] : '\n' 保证 i==len 时不越界读 buf[len]。*/
+	while(i <= len)
 	{
 		char c = (i < len) ? buf[i] : '\n';
 		if(c == '\n' || c == '\r' || i == len)

@@ -270,3 +270,35 @@ timestamp=[2026-06-29 23:32:17], mode=BUILD, duration=0:00:01.464, duration_ms=1
 timestamp=[2026-06-29 23:32:22], mode=BUILD, duration=0:00:04.508, duration_ms=4508, data={name=new_ssbl_system, configuration=Debug, clean_build=false}
 timestamp=[2026-06-29 23:34:58], mode=BUILD, duration=0:00:01.414, duration_ms=1414, data={name=new_ssbl, configuration=Debug, clean_build=false}
 timestamp=[2026-06-29 23:35:03], mode=BUILD, duration=0:00:04.595, duration_ms=4595, data={name=new_ssbl_system, configuration=Debug, clean_build=false}
+timestamp=[2026-06-30 19:24:20], mode=WORKBENCH_START, duration=0:00:10.151, duration_ms=10151, data={}
+timestamp=[2026-06-30 19:24:21], mode=PLATFORM_REPOSITORY_INIT, duration=0:00:00.171, duration_ms=171, data={}
+timestamp=[2026-06-30 19:24:22], mode=WORKBENCH_UI_INIT, duration=0:00:01.486, duration_ms=1486, data={editors_count=16, platform_editors_count=0, projects_count=16, platform_projects_count=1, active_platform_editor=false, projects=FileX_A9,FileX_A9_system,RemoteSystemsTempFiles,ThreadX_A9,ThreadX_A9_system,hello_app1,hello_app1_system,new_fsbl,new_fsbl_system,new_ssbl,new_ssbl_system,simple_fsbl,simple_fsbl_system,ssbl,ssbl_system,zynq7010}
+timestamp=[2026-06-30 19:25:16], mode=APP_CREATION, duration=0:00:03.015, duration_ms=3015, data={name=LevelX_NOR, project_type=sdk, os=standalone, processor=cortex-a9, runtime=C/C++, platform=zynq7010, application_type=static_lib}
+timestamp=[2026-06-30 19:51:12], mode=BUILD, duration=0:00:00.944, duration_ms=944, data={name=LevelX_NOR, configuration=Debug, clean_build=false}
+timestamp=[2026-06-30 19:51:54], mode=BUILD, duration=0:00:06.279, duration_ms=6279, data={name=LevelX_NOR, configuration=Debug, clean_build=false}
+timestamp=[2026-06-30 20:03:40], mode=BUILD, duration=0:00:00.451, duration_ms=451, data={name=new_ssbl, configuration=Debug, clean_build=true}
+timestamp=[2026-06-30 20:03:48], mode=BUILD, duration=0:00:08.027, duration_ms=8027, data={name=new_ssbl, configuration=Debug, clean_build=false}
+timestamp=[2026-06-30 20:03:59], mode=BUILD, duration=0:00:10.444, duration_ms=10444, data={name=new_ssbl_system, configuration=Debug, clean_build=false}
+timestamp=[2026-06-30 20:39:55], mode=BUILD, duration=0:00:04.867, duration_ms=4867, data={name=new_ssbl, configuration=Debug, clean_build=false}
+timestamp=[2026-06-30 20:42:41], mode=BUILD, duration=0:00:01.510, duration_ms=1510, data={name=new_ssbl, configuration=Debug, clean_build=false}
+timestamp=[2026-06-30 20:55:10], mode=BUILD, duration=0:00:00.696, duration_ms=696, data={name=new_ssbl, configuration=Debug, clean_build=false}
+timestamp=[2026-06-30 20:55:19], mode=MISC, duration=0:00:03.793, duration_ms=3793, data={name=new_ssbl_system, type=bif_creation}
+timestamp=[2026-06-30 20:57:50], mode=APP_CREATION, duration=0:00:04.254, duration_ms=4254, data={name=hello_app2, project_type=sdk, os=standalone, processor=cortex-a9, runtime=C/C++, platform=zynq7010, application_type=application}
+timestamp=[2026-06-30 20:58:19], mode=BUILD, duration=0:00:01.116, duration_ms=1116, data={name=hello_app2, configuration=Debug, clean_build=false}
+timestamp=[2026-06-30 21:13:19], mode=BUILD, duration=0:00:01.217, duration_ms=1217, data={name=new_fsbl, configuration=Debug, clean_build=false}
+timestamp=[2026-06-30 21:19:46], mode=BUILD, duration=0:00:03.572, duration_ms=3572, data={name=new_ssbl, configuration=Debug, clean_build=false}
+timestamp=[2026-06-30 21:22:12], mode=MISC, duration=0:00:04.580, duration_ms=4580, data={name=new_fsbl_system, type=bif_creation}
+timestamp=[2026-06-30 21:36:32], mode=BUILD, duration=0:00:01.528, duration_ms=1528, data={name=new_ssbl, configuration=Debug, clean_build=false}
+timestamp=[2026-06-30 21:40:44], mode=BUILD, duration=0:00:01.458, duration_ms=1458, data={name=new_ssbl, configuration=Debug, clean_build=false}
+timestamp=[2026-06-30 21:40:52], mode=BUILD, duration=0:00:07.042, duration_ms=7042, data={name=new_ssbl_system, configuration=Debug, clean_build=false}
+timestamp=[2026-06-30 21:51:03], mode=BUILD, duration=0:00:01.461, duration_ms=1461, data={name=new_ssbl, configuration=Debug, clean_build=false}
+timestamp=[2026-06-30 22:06:51], mode=BUILD, duration=0:00:01.467, duration_ms=1467, data={name=new_ssbl, configuration=Debug, clean_build=false}
+timestamp=[2026-06-30 22:20:11], mode=BUILD, duration=0:00:01.519, duration_ms=1519, data={name=new_ssbl, configuration=Debug, clean_build=false}
+timestamp=[2026-06-30 22:25:21], mode=BUILD, duration=0:00:01.531, duration_ms=1531, data={name=new_ssbl, configuration=Debug, clean_build=false}
+timestamp=[2026-06-30 22:25:41], mode=BUILD, duration=0:00:00.731, duration_ms=731, data={name=new_ssbl, configuration=Debug, clean_build=false}
+timestamp=[2026-06-30 22:47:32], mode=BUILD, duration=0:00:01.536, duration_ms=1536, data={name=new_ssbl, configuration=Debug, clean_build=false}
+timestamp=[2026-06-30 22:47:39], mode=BUILD, duration=0:00:00.672, duration_ms=672, data={name=new_ssbl, configuration=Debug, clean_build=false}
+timestamp=[2026-06-30 22:47:44], mode=BUILD, duration=0:00:04.855, duration_ms=4855, data={name=new_ssbl_system, configuration=Debug, clean_build=false}
+timestamp=[2026-06-30 22:54:02], mode=BUILD, duration=0:00:01.704, duration_ms=1704, data={name=new_ssbl, configuration=Debug, clean_build=false}
+timestamp=[2026-06-30 23:07:34], mode=BUILD, duration=0:00:01.454, duration_ms=1454, data={name=new_ssbl, configuration=Debug, clean_build=false}
+timestamp=[2026-06-30 23:07:38], mode=BUILD, duration=0:00:04.540, duration_ms=4540, data={name=new_ssbl_system, configuration=Debug, clean_build=false}

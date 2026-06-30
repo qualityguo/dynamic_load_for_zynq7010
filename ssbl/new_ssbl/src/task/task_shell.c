@@ -33,7 +33,6 @@ void  AppTaskShell			(ULONG thread_input)
 	{
 		ssbl_printf(LOG_ERR, "uart1 Get_UART_Device error.\r\n");
 	}
-	uart_Register_Notify(pUARTDev1, NULL);
 
 	// 2. 初始化shell组件
 	shell.read = myShellRead;
@@ -46,6 +45,8 @@ void  AppTaskShell			(ULONG thread_input)
 	{
 		ssbl_printf(LOG_INFO, "Shell task activated!\r\n");
 	}
+
+	uart_Register_Notify(pUARTDev1, NULL);			// 回调必须放在这，否则会影响trigger任务
 
 	// 4. 启动shell轮询
 	while(1)

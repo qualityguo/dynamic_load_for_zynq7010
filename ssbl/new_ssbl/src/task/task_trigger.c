@@ -2,7 +2,7 @@
 #include "ssbl.h"
 
 /************************** Constant Definitions *****************************/
-#define MAGIC_WORD  0xDEADBEEFu											// 串口触发Shell魔数
+#define MAGIC_WORD  0x41414141u											// 串口触发Shell魔数
 #define	UART_BUF_LEN	128
 
 

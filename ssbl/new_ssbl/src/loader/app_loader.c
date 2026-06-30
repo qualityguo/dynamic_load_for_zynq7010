@@ -60,12 +60,12 @@ app_err_t app_load_file(const char *path, uint32_t *out_size)
 		}
 		want = APP_MAX_SIZE - total;
 		status = fx_file_read(&s_fx_file, dst + total, want, &br);
-		if (status != FX_SUCCESS) {
+		if (status != FX_SUCCESS && status != FX_END_OF_FILE) {
 			ssbl_printf(LOG_ERR, "fx_file_read error (0x%08X)\r\n", (unsigned)status);
 			fx_file_close(&s_fx_file);
 			return APP_ERR_IO;
 		}
-		if (br == 0u) break;                  /* EOF */
+		if (br == 0u) break;                  /* EOF: FileX 以 FX_END_OF_FILE 通知，actual=0 */
 		total += (uint32_t)br;
 	}
 	fx_file_close(&s_fx_file);

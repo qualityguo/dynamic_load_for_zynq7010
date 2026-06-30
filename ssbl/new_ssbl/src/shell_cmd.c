@@ -5,7 +5,7 @@
 *	文件名称 : shell_cmd.c
 *	版    本 : V1.0
 *	说    明 : 基于 letter shell（argc/argv 模式，SHELL_AUTO_PRASE=0）。
-*	           实现：info/status/ls/cat/rm/mv/cfg/boot/mem/test/reset/ymodem
+ *	           实现：info/status/ls/cat/rm/mv/cfg/boot/reset/ymodem
 *	           文件操作直接使用 FileX（g_fx_media），加载使用 app_loader/bitstream_loader。
 *
 *********************************************************************************************************
@@ -23,6 +23,9 @@ extern u32        g_boot_mode;
 
 /* 文件操作共用句柄（shell 单线程运行，复用安全）*/
 static FX_FILE s_file;
+
+/* cat 输出上限：串口刷屏会卡死，超此直接拒绝（bit/app 可达 MB 级）*/
+#define CAT_MAX_BYTES  (8u * 1024u)
 
 
 /* ============================== 辅助函数 ============================== */
@@ -172,6 +175,15 @@ int cmd_cat(int argc, char *argv[])
         return 0;
     }
 
+    if (s_file.fx_file_current_file_size > CAT_MAX_BYTES) {
+        xil_printf("cat: %s too large (%llu bytes, max %u)\r\n",
+                   argv[1],
+                   (unsigned long long)s_file.fx_file_current_file_size,
+                   (unsigned)CAT_MAX_BYTES);
+        fx_file_close(&s_file);
+        return 0;
+    }
+
     UCHAR buf[512];
     ULONG actual;
     while (fx_file_read(&s_file, buf, sizeof(buf), &actual) == FX_SUCCESS && actual > 0) {
@@ -220,6 +232,12 @@ int cmd_rm(int argc, char *argv[])
     if (status != FX_SUCCESS) {
         xil_printf("rm %s failed (0x%x)\r\n", argv[1], status);
     } else {
+        /* fx_file_delete 只改目录项（留在 FileX 逻辑扇区缓存），必须 flush 才落盘，
+         * 否则复位后 RAM 缓存丢失、文件“复活”。*/
+        status = fx_media_flush(&g_fx_media);
+        if (status != FX_SUCCESS) {
+            xil_printf("rm flush failed (0x%x)\r\n", status);
+        }
         xil_printf("deleted %s\r\n", argv[1]);
     }
     return 0;
@@ -228,13 +246,21 @@ int cmd_rm(int argc, char *argv[])
 /* ============================== mv ============================== */
 int cmd_mv(int argc, char *argv[])
 {
+    UINT status;
     if (argc < 3) {
         xil_printf("usage: mv <old> <new>\r\n");
         return 0;
     }
-    UINT status = fx_file_rename(&g_fx_media, argv[1], argv[2]);
+    status = fx_file_rename(&g_fx_media, argv[1], argv[2]);
     if (status != FX_SUCCESS) {
         xil_printf("mv failed (0x%x)\r\n", status);
+        return 0;
+    }
+    /* fx_file_rename 只改目录项（留在 FileX 逻辑扇区缓存），必须 flush 才落盘，
+     * 否则复位后 RAM 缓存丢失、改名“回滚”。*/
+    status = fx_media_flush(&g_fx_media);
+    if (status != FX_SUCCESS) {
+        xil_printf("mv flush failed (0x%x)\r\n", status);
     }
     return 0;
 }
@@ -311,58 +337,6 @@ int cmd_boot(int argc, char *argv[])
     int rc = boot_run(app, bit);
     /* boot_run 返回 = 失败（成功不会返回）*/
     xil_printf("boot failed (%d)\r\n", rc);
-    return 0;
-}
-
-/* ============================== mem ============================== */
-int cmd_mem(int argc, char *argv[])
-{
-    if (argc < 2) {
-        xil_printf("usage: mem <addr> [n]\r\n");
-        return 0;
-    }
-
-    uint32_t addr = (uint32_t)strtoul(argv[1], NULL, 0);
-    int n = (argc >= 3) ? (int)strtoul(argv[2], NULL, 0) : 16;
-    volatile uint32_t *p = (volatile uint32_t *)(addr & ~3u);
-    int i;
-
-    for (i = 0; i < n; i++) {
-        if ((i & 3) == 0)
-            xil_printf("\r\n0x%08X: ", (unsigned)(addr + (uint32_t)i * 4u));
-        xil_printf("%08X ", (unsigned)p[i]);
-    }
-    xil_printf("\r\n");
-    return 0;
-}
-
-/* ============================== test ============================== */
-int cmd_test(int argc, char *argv[])
-{
-    if (argc < 3) {
-        xil_printf("usage: test app <file> | test bitstream <file>\r\n");
-        return 0;
-    }
-
-    if (strcmp(argv[1], "app") == 0) {
-        uint32_t size = 0;
-        app_err_t rc = app_load_file(argv[2], &size);
-        xil_printf("test app %s: %s (load=0x%08X, %u bytes)\r\n",
-                   argv[2], rc == APP_OK ? "OK" : "FAIL",
-                   APP_LOAD_ADDR, size);
-    } else if (strcmp(argv[1], "bitstream") == 0) {
-        uint32_t size = 0;
-        bit_err_t rc = bitstream_load_file(argv[2], &size);
-        if (rc != BIT_OK) {
-            xil_printf("test bitstream %s: FAIL (load %d)\r\n", argv[2], rc);
-            return 0;
-        }
-        rc = bitstream_program((uint8_t *)BITSTREAM_DDR_ADDR, size);
-        xil_printf("test bitstream %s: %s (%u bytes)\r\n",
-                   argv[2], rc == BIT_OK ? "OK" : "FAIL", size);
-    } else {
-        xil_printf("unknown test target: %s\r\n", argv[1]);
-    }
     return 0;
 }
 
@@ -581,8 +555,6 @@ SHELL_EXPORT_CMD(rm,     cmd_rm,     rm <file>);
 SHELL_EXPORT_CMD(mv,     cmd_mv,     mv <old> <new>);
 SHELL_EXPORT_CMD(cfg,    cmd_cfg,    cfg show/set/save);
 SHELL_EXPORT_CMD(boot,   cmd_boot,   boot [app] [bit]);
-SHELL_EXPORT_CMD(mem,    cmd_mem,    mem <addr> [n]);
-SHELL_EXPORT_CMD(test,   cmd_test,   test app|bitstream <file>);
 SHELL_EXPORT_CMD(reset,  cmd_reset,  soft reset);
 SHELL_EXPORT_CMD(ym,     cmd_ymodem, ym load | ym save);
 
