@@ -18,6 +18,7 @@
 */
 #include "tx_api.h"
 #include "fx_api.h"
+#include "lx_api.h"
 
 /*
 *********************************************************************************************************
@@ -36,6 +37,7 @@
 
 #include "fx_zynq_sdio_driver.h"
 #include "fx_zynq_qspi_driver.h"
+#include "lx_zynq_qspi_flash_driver.h"
 
 #include "cb.h"
 #include "key_driver.h"

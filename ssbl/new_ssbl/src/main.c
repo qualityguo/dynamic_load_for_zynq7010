@@ -179,6 +179,9 @@ static  void  AppFileXInit			(void)
 	/* 判断当前启动模式 */
 	g_boot_mode = Xil_In32(BOOT_MODE_REG) & BOOT_MODES_MASK;
 
+	/* NOR-FLash初始化 */
+	lx_nor_flash_initialize();
+
 	/* FileX初始化 */
 	fx_system_initialize();
 
@@ -197,7 +200,35 @@ static  void  AppFileXInit			(void)
 			status =  fx_media_open(&g_fx_media, "QSPI", fx_zynq_qspi_driver, 0, media_memory, sizeof(media_memory));
 			if (status != FX_SUCCESS)
 			{
-				ssbl_printf(LOG_ERR, "fx_media_open error.\r\n");
+				ssbl_printf(LOG_INFO, "fx_media_open failed(0x%lx), formatting...\r\n", (unsigned long)status);
+				/* LevelX 管理区可能残留与当前驱动端序/格式不一致的旧数据，
+				 * 会导致 lx_nor_flash_open "成功"但内部状态损坏、format 写失败。
+				 * BOOT.bin (<1MB) 不会被波及，此处从 1MB 起擦除整片 LevelX 区。 */
+				status =  fx_media_format(&g_fx_media,
+										fx_zynq_qspi_driver,
+										0,
+										(UCHAR *)media_memory,
+										sizeof(media_memory),
+										"QSPI_DISK",
+										1,
+										32,
+										FX_QSPI_META_SECTORS,
+										lx_qspi_get_total_sectors() - FX_QSPI_META_SECTORS,
+										512,
+										1,
+										1,
+										1);
+				if (status != FX_SUCCESS)
+				{
+					ssbl_printf(LOG_ERR, "fx_media_format error(0x%lx).\r\n", (unsigned long)status);
+					break;
+				}
+				status =  fx_media_open(&g_fx_media, "QSPI", fx_zynq_qspi_driver, 0, media_memory, sizeof(media_memory));
+				if (status != FX_SUCCESS)
+				{
+					ssbl_printf(LOG_ERR, "fx_media_open error after format.\r\n");
+					break;
+				}
 			}
 			ssbl_printf(LOG_INFO, "fx_media_open qspi flash.\r\n");
 			break;

@@ -11,6 +11,11 @@
 /* 初始化 QSPI 控制器硬件（XQspiPs）。成功返回 0，失败返回 -1。 */
 int  lx_qspi_hardware_init(void);
 
+/* 擦除 LevelX 管理区域（QSPI_BOOT_OFFSET 起），用于恢复损坏的 LevelX 元数据。 */
+void lx_qspi_erase_levelx_region(void);
+
+ULONG lx_qspi_get_total_sectors(void);
+
 /*
  * LevelX NOR 实例初始化：设置 Flash 几何参数、注册驱动回调、提供扇区缓冲。
  * 由 lx_nor_flash_open() 回调，应用无需直接调用。
