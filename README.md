@@ -85,6 +85,13 @@ ssbl/
 │   └── zynq7010/             # Vivado 硬件平台
 ├── template/                 # 干净工程模板（含 fsbl/ssbl/scripts）
 ├── scripts/                  # 构建/链接辅助脚本
+│   ├── boot.cfg              # 启动配置（app/bit/boot_delay/auto_boot）
+│   ├── pl_a.bit              # PL bitstream（运行时由 PCAP 动态加载）
+│   ├── boot/                 # BOOT.BIN 打包
+│   │   ├── new_fsbl.elf      # 一级引导
+│   │   ├── new_ssbl.elf      # 二级引导
+│   │   └── gen_bootbin.py    # 调用 Vitis bootgen 生成 boot.bin（双击即可）
+│   └── app/                  # app 的 elf/bin + elf2bin.py（拖拽转 bin）
 └── vivado/                   # Vivado 硬件工程
 ```
 
@@ -171,4 +178,8 @@ Azure RTOS 家族，共享同一套线程、互斥锁、信号量、定时器原
 - 工具链：Xilinx Vitis / SDK（ARM Cortex-A9 gcc）；
 - 硬件平台：`ssbl/zynq7010/`（导出自 Vivado 的 `.xsa`/硬件工程）；
 - 依赖库：`ThreadX_A9` / `FileX_A9` / `LevelX_NOR`（源码已包含在 `src/` 下，或以 `.a` 静态库形式链接）；
-- SSBL 编译产出 `.elf` 后，与 FSBL、bitstream 一起打包成 `BOOT.BIN` 烧入 QSPI/SD。
+- 编译产出 `.elf` 后，把 FSBL 与 SSBL 的 elf 拷到 `scripts/boot/`，双击
+  `gen_bootbin.py`（或 `py scripts\boot\gen_bootbin.py`）即调用 Vitis `bootgen`
+  按 `new_ssbl_system.bif` 同款格式打包出 `boot.bin`（bitstream 不打入镜像，运行时由 PCAP
+  按 `boot.cfg` 动态加载），烧入 QSPI/SD 即可启动；
+- app 的 `.elf` 可用 `scripts/app/elf2bin.py`（拖拽）转成扁平 `.bin`，供 SSBL 热加载。
