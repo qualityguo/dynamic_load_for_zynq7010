@@ -7,6 +7,7 @@
 #include "xparameters.h"
 #include "xil_cache.h"
 #include "xil_exception.h"
+#include "xuartps_hw.h"
 
 /************************** Function Prototypes ******************************/
 extern 	int  ps7_init();
@@ -19,6 +20,7 @@ static 	void FIQ_Handler (void);
 static 	void RegisterHandlers(void);
 static	u32  DDRInitCheck(void);
 static	void FsblHandoff(u32 FsblStartAddr);
+static	void UartTxFlush(void);
 
 /************************** Variable Definitions *****************************/
 extern ImageMoverType MoveImage;
@@ -129,11 +131,28 @@ void FsblHandoff(u32 FsblStartAddr)
 	fsbl_printf(LOG_INFO, "[5/5] Handoff to 0x%.8lx\r\n", FsblStartAddr);
 	fsbl_printf(LOG_INFO, "SUCCESSFUL_HANDOFF\r\n");
 
+	/* 阻塞直到 UART TX FIFO 排空，避免跳转到 SSBL 时最后一帧打印被截断 */
+	UartTxFlush();
+
 	FsblHandoffExit(FsblStartAddr);
 
 	fsbl_printf(LOG_ERR, "Handoff failed - should not reach here\r\n");
 
 	while(1);
+}
+
+
+/* 轮询 UART 通道状态寄存器的 TXEMPTY 位，直到发送 FIFO 完全排空。
+ * xil_printf 经 STDOUT_BASEADDRESS(UART1) 输出，写入是入 FIFO，
+ * 必须等 FIFO 真正发完才能跳转/复位，否则字符丢失。*/
+static void UartTxFlush(void)
+{
+#ifdef STDOUT_BASEADDRESS
+	while ((Xil_In32(STDOUT_BASEADDRESS + XUARTPS_SR_OFFSET)
+	        & XUARTPS_SR_TXEMPTY) == 0u) {
+		/* busy wait */
+	}
+#endif
 }
 
 char *strcpy_rom(char *Dest, const char *Src)

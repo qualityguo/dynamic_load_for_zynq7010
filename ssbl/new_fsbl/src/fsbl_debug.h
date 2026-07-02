@@ -20,11 +20,9 @@ extern "C" {
 #define LOG_ERR		0x00000001
 #define LOG_INFO	0x00000002
 
+//#define fsbl_dbg_current_types 0
 //#define fsbl_dbg_current_types (LOG_ERR)
 #define fsbl_dbg_current_types (LOG_ERR | LOG_INFO)
-
-
-
 
 
 #ifdef STDOUT_BASEADDRESS
